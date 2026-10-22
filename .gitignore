@@ -24,5 +24,6 @@ Thumbs.db
 .idea/
 
 # Release archives and logs
-/release/
+/release/*
+!/release/rubup_bot.zip
 *.log
