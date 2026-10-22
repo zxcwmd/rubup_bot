@@ -236,6 +236,18 @@ data/browser-profile/     # секретная авторизованная се
 
 ## 8. Устранение неполадок
 
+### `No suitable Python runtime found` / Python не найден
+
+Установите 64-битный Python 3.11 или новее. Самый простой способ на Windows 10/11 — выполнить в PowerShell или CMD:
+
+```bat
+winget install -e --id Python.Python.3.12
+```
+
+После установки закройте окно установщика/терминала и запустите `scripts\install.bat` заново. Можно также установить Python с [python.org/downloads](https://www.python.org/downloads/), включив **Add Python to PATH** и **Python Launcher**.
+
+Проверить установленные версии можно командой `py -0p`. Обновлённый установщик принимает любой Python 3.11+ и использует `py -3` либо `python`, а не требует именно версию 3.11.
+
 ### `TELEGRAM_BOT_TOKEN ...` или Telegram 401
 
 Проверьте токен от `@BotFather`. В `.env` не должно быть русского placeholder-а или лишних кавычек.
