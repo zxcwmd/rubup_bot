@@ -1,0 +1,28 @@
+# Secrets
+.env
+
+# Runtime data and browser authorization
+/data/
+/browser-profile/
+/images/*
+!/images/.gitkeep
+
+# Python
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+
+# OS / editors
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Release archives and logs
+/release/
+*.log

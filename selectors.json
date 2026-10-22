@@ -1,0 +1,67 @@
+{
+  "challenge": [
+    "iframe[src*='captcha' i]",
+    "#captcha_container",
+    "[data-testid*='captcha' i]",
+    "text=/Verify to continue|Подтвердите, что вы человек/i"
+  ],
+  "logged_in": [
+    "[data-e2e='profile-icon']",
+    "a[href^='/@'][data-e2e*='profile' i]"
+  ],
+  "video_links": [
+    "a[href*='/video/']"
+  ],
+  "comment_items": [
+    "[data-e2e='comment-item']",
+    "[data-e2e*='comment-item' i]",
+    "div[class*='CommentItem']",
+    "div[class*='comment-item']"
+  ],
+  "comment_author": [
+    "[data-e2e='comment-username']",
+    "[data-e2e*='comment-username' i]",
+    "a[href^='/@']"
+  ],
+  "comment_text": [
+    "[data-e2e='comment-text']",
+    "[data-e2e*='comment-text' i]",
+    "p",
+    "span"
+  ],
+  "comment_reply_button": [
+    "[data-e2e='comment-reply']",
+    "[data-e2e*='reply' i]",
+    "button:has-text('Reply')",
+    "button:has-text('Ответить')",
+    "span:has-text('Reply')",
+    "span:has-text('Ответить')"
+  ],
+  "comment_input": [
+    "[data-e2e='comment-reply-input'][contenteditable='true']",
+    "div[contenteditable='true'][data-e2e*='reply' i]",
+    "div[contenteditable='true']:focus",
+    "[data-e2e='comment-input'][contenteditable='true']",
+    "div[contenteditable='true'][data-e2e*='comment' i]",
+    "div[contenteditable='true']",
+    "textarea[placeholder*='comment' i]",
+    "textarea[placeholder*='коммент' i]"
+  ],
+  "image_input": [
+    "input[type='file'][accept*='image' i]",
+    "input[type='file']"
+  ],
+  "image_preview": [
+    "[data-e2e*='comment-image' i] img",
+    "[class*='Comment'] [class*='Image'] img",
+    "img[alt*='comment' i]"
+  ],
+  "submit": [
+    "[data-e2e='comment-post']",
+    "button[data-e2e*='comment-post' i]",
+    "button:has-text('Post')",
+    "button:has-text('Опубликовать')",
+    "[role='button'][aria-label*='Post' i]",
+    "[role='button'][aria-label*='Опубликовать' i]"
+  ]
+}

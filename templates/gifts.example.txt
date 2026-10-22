@@ -1,0 +1,5 @@
+# Rename to gifts.txt and set ALLOW_GIFT_CLAIMS=true ONLY if every claim
+# describes a gift you actually received. Otherwise keep this feature disabled.
+Спасибо, подарок из этого кейса действительно пришёл
+Бот выдал мне этот скин, приятная неожиданность
+Спасибо за мишку, подарок уже у меня
