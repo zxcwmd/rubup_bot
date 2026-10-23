@@ -49,7 +49,8 @@ class TelegramClient(private val settings: SettingsStore) {
             if (!response.optBoolean("ok")) {
                 throw BotFailure("Telegram $method: ${response.optString("description", "unknown error")}")
             }
-            response.getJSONObject("result") if response.opt("result") is JSONObject else response
+            val result = response.opt("result")
+            if (result is JSONObject) result else response
         } finally {
             connection.disconnect()
         }
