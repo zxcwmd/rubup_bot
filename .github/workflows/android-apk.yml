@@ -42,7 +42,10 @@ jobs:
           [ ! -f android/app/build/outputs/apk/debug/app-debug.apk ] || cp android/app/build/outputs/apk/debug/app-debug.apk release/RubUP-Worker-debug.apk
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add -f release/android-build.log release/RubUP-Worker-debug.apk 2>/dev/null || true
+          files=()
+          [ ! -f release/android-build.log ] || files+=(release/android-build.log)
+          [ ! -f release/RubUP-Worker-debug.apk ] || files+=(release/RubUP-Worker-debug.apk)
+          if [ "${#files[@]}" -gt 0 ]; then git add -f "${files[@]}"; fi
           if ! git diff --cached --quiet; then
             git commit -m "Update Android build outputs [skip ci]"
             git push origin "HEAD:${GITHUB_REF_NAME}"
