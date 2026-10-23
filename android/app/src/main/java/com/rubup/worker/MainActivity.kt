@@ -24,6 +24,7 @@ class MainActivity : Activity() {
     private lateinit var runtime: WebViewRuntime
     private lateinit var webContainer: FrameLayout
     private lateinit var status: TextView
+    private lateinit var diagnostic: TextView
     private lateinit var tokenInput: EditText
     private lateinit var adminInput: EditText
     private lateinit var usernameInput: EditText
@@ -54,6 +55,12 @@ class MainActivity : Activity() {
             setPadding(0, 0, 0, 12)
         }
         panel.addView(status)
+        diagnostic = TextView(this).apply {
+            textSize = 13f
+            setTextColor(Color.rgb(109, 40, 117))
+            setPadding(0, 0, 0, 12)
+        }
+        panel.addView(diagnostic)
         tokenInput = input("Telegram Bot Token", settings.telegramToken, InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD)
         adminInput = input("Ваш числовой Telegram ID", settings.adminIds.joinToString(","), InputType.TYPE_CLASS_NUMBER)
         usernameInput = input("Логин TikTok без @", settings.tiktokUsername, InputType.TYPE_CLASS_TEXT)
@@ -68,6 +75,7 @@ class MainActivity : Activity() {
         }
         panel.addView(modeInput)
         panel.addView(button("Сохранить и запустить службу") { saveAndStart() })
+        panel.addView(button("Проверить Telegram: токен и сеть") { checkTelegram() })
         nativePanel = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         nativePanel.addView(button("1. Включить Accessibility для RubUP") { openAccessibilitySettings() })
         nativePanel.addView(button("2. Открыть установленный TikTok") { openInstalledTikTok() })
@@ -105,6 +113,13 @@ class MainActivity : Activity() {
         } else {
             status.text = "Резервный режим WebView. Для работы в установленном TikTok включите переключатель выше."
         }
+        updateDiagnostic()
+    }
+
+    private fun updateDiagnostic() {
+        if (::diagnostic.isInitialized) {
+            diagnostic.text = settings.telegramDiagnostic.ifBlank { "Telegram-диагностика пока не запускалась." }
+        }
     }
 
     private fun input(hint: String, value: String, type: Int): EditText = EditText(this).apply {
@@ -126,14 +141,45 @@ class MainActivity : Activity() {
             settings.useInstalledTikTok = modeInput.isChecked
             settings.save(tokenInput.text.toString(), adminInput.text.toString(), usernameInput.text.toString())
             startServiceAction(WorkerService.ACTION_START)
+            settings.telegramDiagnostic = "Служба запущена; подключаю Telegram…"
+            updateDiagnostic()
             status.text = if (modeInput.isChecked) {
                 "Настройки сохранены. Включите Accessibility, войдите в установленный TikTok и отправьте /start боту."
             } else {
                 "Настройки сохранены. Войдите в TikTok в WebView и отправьте /start боту."
             }
         } catch (error: Exception) {
+            status.text = "Ошибка настроек или запуска службы: ${error.message}"
+            settings.telegramDiagnostic = status.text.toString()
+            updateDiagnostic()
             Toast.makeText(this, error.message, Toast.LENGTH_LONG).show()
         }
+    }
+
+    private fun checkTelegram() {
+        if (!settings.isConfigured) {
+            status.text = "Сначала заполните все три поля и нажмите «Сохранить и запустить службу»."
+            return
+        }
+        val token = settings.telegramToken
+        settings.telegramDiagnostic = "Проверяю Telegram Bot API…"
+        updateDiagnostic()
+        Thread {
+            try {
+                val me = TelegramClient(settings).api("getMe")
+                val username = me.optString("username").ifBlank { "бот без username" }
+                runOnUiThread {
+                    settings.telegramDiagnostic = "Telegram отвечает: @$username. Если в чате тишина, проверьте числовой ID и запуск службы."
+                    updateDiagnostic()
+                }
+            } catch (error: Exception) {
+                val detail = (error.message ?: error.javaClass.simpleName).replace(token, "[токен скрыт]")
+                runOnUiThread {
+                    settings.telegramDiagnostic = "Ошибка Telegram: $detail"
+                    updateDiagnostic()
+                }
+            }
+        }.start()
     }
 
     private fun openAccessibilitySettings() {

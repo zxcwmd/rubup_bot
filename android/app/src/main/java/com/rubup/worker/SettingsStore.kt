@@ -23,6 +23,10 @@ class SettingsStore(context: Context) {
         get() = prefs.getBoolean("use_installed_tiktok", true)
         set(value) = prefs.edit().putBoolean("use_installed_tiktok", value).apply()
 
+    var telegramDiagnostic: String
+        get() = prefs.getString("telegram_diagnostic", "").orEmpty()
+        set(value) = prefs.edit().putString("telegram_diagnostic", value.take(1000)).apply()
+
     var autoEnabled: Boolean
         get() = prefs.getBoolean("auto_enabled", false)
         set(value) = prefs.edit().putBoolean("auto_enabled", value).apply()

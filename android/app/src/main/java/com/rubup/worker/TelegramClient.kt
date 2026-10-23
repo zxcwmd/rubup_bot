@@ -21,7 +21,8 @@ class TelegramClient(private val settings: SettingsStore) {
         }
 
     private fun readBytes(connection: HttpURLConnection, limit: Int = 25 * 1024 * 1024): ByteArray {
-        val stream = if (connection.responseCode in 200..299) connection.inputStream else connection.errorStream
+        val stream = (if (connection.responseCode in 200..299) connection.inputStream else connection.errorStream)
+            ?: throw BotFailure("Telegram HTTP ${connection.responseCode}: пустой ответ")
         return stream.use { input ->
             val output = ByteArrayOutputStream()
             val buffer = ByteArray(32 * 1024)

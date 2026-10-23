@@ -50,6 +50,7 @@ class WorkerService : Service() {
             ACTION_STOP -> Thread { engine.forceStop() }.start()
         }
         if (polling?.isAlive != true) {
+            settings.telegramDiagnostic = "Служба запущена; подключаю Telegram…"
             running = true
             polling = Thread({ pollTelegram() }, "rubup-telegram").apply {
                 isDaemon = true
@@ -67,6 +68,7 @@ class WorkerService : Service() {
         engine.shutdown()
         db.close()
         wakeLock?.let { if (it.isHeld) it.release() }
+        settings.telegramDiagnostic = "Служба остановлена"
         stopForeground(STOP_FOREGROUND_REMOVE)
         super.onDestroy()
     }
@@ -96,19 +98,36 @@ class WorkerService : Service() {
         var offset = 0L
         while (running) {
             if (!settings.isConfigured) {
+                settings.telegramDiagnostic = "Настройки не заполнены: нужны токен, числовой Telegram ID и логин TikTok"
                 sleep(2000)
                 continue
             }
             try {
                 val updates = telegram.getUpdates(offset)
+                if (settings.telegramDiagnostic != "Telegram подключён; ожидаю команды") {
+                    settings.telegramDiagnostic = "Telegram подключён; ожидаю команды"
+                }
                 for (index in 0 until updates.length()) {
                     val update = updates.getJSONObject(index)
                     offset = maxOf(offset, update.optLong("update_id") + 1)
                     handleUpdate(update)
                 }
             } catch (error: Exception) {
+                recordTelegramError(error)
                 if (running) sleep(5000)
             }
+        }
+    }
+
+    private fun recordTelegramError(error: Exception) {
+        val rawDetail = error.message ?: error.javaClass.simpleName
+        val token = settings.telegramToken
+        val detail = if (token.isBlank()) rawDetail else rawDetail.replace(token, "[токен скрыт]")
+        val message = "Ошибка Telegram: $detail"
+        if (settings.telegramDiagnostic != message) {
+            settings.telegramDiagnostic = message
+            val manager = getSystemService(NOTIFICATION_SERVICE) as NotificationManager
+            manager.notify(NOTIFICATION_ID, notification("Ошибка Telegram. Откройте RubUP Worker для диагностики."))
         }
     }
 
@@ -302,7 +321,9 @@ class WorkerService : Service() {
 
     private fun sendToAdmins(text: String, inline: JSONArray? = null) {
         settings.adminIds.forEach { id ->
-            try { telegram.sendMessage(id, text, inlineKeyboard = inline) } catch (_: Exception) { }
+            try { telegram.sendMessage(id, text, inlineKeyboard = inline) } catch (error: Exception) {
+                recordTelegramError(error)
+            }
         }
     }
 
