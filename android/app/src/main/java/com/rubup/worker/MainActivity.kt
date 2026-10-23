@@ -147,7 +147,8 @@ class MainActivity : Activity() {
 
     private fun openInstalledTikTok() {
         try {
-            TikTokAppLauncher.open(this)
+            val packageName = TikTokAppLauncher.open(this)
+            Toast.makeText(this, "Найден TikTok: $packageName", Toast.LENGTH_LONG).show()
         } catch (error: Exception) {
             Toast.makeText(this, error.message, Toast.LENGTH_LONG).show()
         }

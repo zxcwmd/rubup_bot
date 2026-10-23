@@ -2,6 +2,7 @@ package com.rubup.worker
 
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.net.Uri
 import org.json.JSONObject
 import java.io.ByteArrayOutputStream
@@ -12,15 +13,29 @@ import java.util.Locale
 
 /** Launches only the TikTok package already installed by the user. */
 object TikTokAppLauncher {
-    val packages = listOf("com.zhiliaoapp.musically", "com.ss.android.ugc.trill")
+    val packages = listOf("com.zhiliaoapp.musically", "com.ss.android.ugc.trill", "com.zhiliaoapp.musically.go")
 
-    fun installedPackage(context: Context): String? = packages.firstOrNull {
-        context.packageManager.getLaunchIntentForPackage(it) != null
+    fun installedPackage(context: Context): String? {
+        val manager = context.packageManager
+        packages.firstOrNull { manager.getLaunchIntentForPackage(it) != null }?.let { return it }
+        // Some regional/Lite/clone builds use another package name. Detect only
+        // launcher activities whose label or package is explicitly TikTok-related.
+        val launcher = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
+        val candidates = manager.queryIntentActivities(launcher, PackageManager.MATCH_ALL)
+        return candidates.firstOrNull { resolve ->
+            val info = resolve.activityInfo ?: return@firstOrNull false
+            val packageName = info.packageName.orEmpty()
+            val label = try { resolve.loadLabel(manager).toString() } catch (_: Exception) { "" }
+            label.contains("tiktok", true) || packageName.contains("tiktok", true) ||
+                packageName.contains("musically", true) || packageName.contains("trill", true)
+        }?.activityInfo?.packageName
     }
 
     fun open(context: Context, url: String? = null): String {
         val packageName = installedPackage(context)
-            ?: throw SessionRequired("На рабочем телефоне не найдено установленное приложение TikTok")
+            ?: throw SessionRequired(
+                "TikTok не найден. Установите и включите официальный TikTok в том же профиле Android, где установлен RubUP Worker.",
+            )
         val intent = if (url == null) {
             context.packageManager.getLaunchIntentForPackage(packageName)
         } else {
@@ -61,7 +76,7 @@ class InstalledTikTokAdapter(
 
     override fun ensureAuthenticated() {
         val packageName = TikTokAppLauncher.installedPackage(context)
-            ?: throw SessionRequired("Установите TikTok на рабочий телефон и войдите в аккаунт")
+            ?: throw SessionRequired("TikTok не найден. Проверьте, что он установлен и включён в том же профиле Android, что и RubUP Worker")
         val service = accessibility()
         TikTokAppLauncher.open(context)
         if (!service.waitForPackage(setOf(packageName), 20)) {
@@ -216,7 +231,7 @@ class InstalledTikTokAdapter(
     }
 
     private fun ensureVideo(canonical: String) {
-        if (currentVideoUrl == canonical && accessibility().currentPackage() in TikTokAppLauncher.packages) return
+        if (currentVideoUrl == canonical && accessibility().currentPackage() == TikTokAppLauncher.installedPackage(context)) return
         openVideo(canonical)
     }
 
