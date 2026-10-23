@@ -32,10 +32,18 @@ jobs:
         working-directory: android
         run: |
           chmod +x gradlew
-          ./gradlew --no-daemon --stacktrace assembleDebug
+          ./gradlew --no-daemon --console=plain --stacktrace assembleDebug > build.log 2>&1 || { code=$?; tail -200 build.log; exit $code; }
       - uses: actions/upload-artifact@v4
+        if: success()
         with:
           name: rubup-worker-debug-apk
           path: android/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
+          retention-days: 14
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: rubup-android-build-log
+          path: android/build.log
+          if-no-files-found: warn
           retention-days: 14
