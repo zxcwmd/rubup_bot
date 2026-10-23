@@ -20,6 +20,7 @@ from playwright.async_api import (
 
 from .config import Settings
 from .models import (
+    AutomationStopped,
     ChallengeRequired,
     ManualActionRequired,
     PublishResult,
@@ -52,6 +53,11 @@ def video_id_from_url(url: str) -> str | None:
     if not canonical:
         return None
     return VIDEO_PATH_RE.match(urlparse(canonical).path).group(2)  # type: ignore[union-attr]
+
+
+def _ensure_not_stopped(stop_event: asyncio.Event | None) -> None:
+    if stop_event is not None and stop_event.is_set():
+        raise AutomationStopped("Остановка получена до нажатия; действие не отправлено")
 
 
 def _walk_json(value: Any) -> Iterable[dict[str, Any]]:
@@ -361,7 +367,7 @@ class TikTokClient:
                 externalId,
                 author: author.replace(/^@/, ''),
                 text: textNode ? (textNode.textContent || '').trim() : '',
-                hasImage: !!element.querySelector("img:not([alt*='avatar' i])")
+                hasImage: args.images.some(selector => !!element.querySelector(selector))
               };
             }).filter(item => item.text)
             """,
@@ -369,6 +375,7 @@ class TikTokClient:
                 "limit": limit,
                 "authors": self._all("comment_author"),
                 "texts": self._all("comment_text"),
+                "images": self._all("published_comment_image"),
             },
         )
         result: list[TikTokComment] = []
@@ -406,6 +413,67 @@ class TikTokClient:
                 continue
         return None
 
+    async def _comment_is_liked(self, item: Locator, button: Locator) -> bool:
+        for candidate in (button, button.locator("xpath=..")):
+            try:
+                if (await candidate.get_attribute("aria-pressed")) == "true":
+                    return True
+                label = (await candidate.get_attribute("aria-label")) or ""
+                if "unlike" in label.lower() or "не нравится" in label.lower():
+                    return True
+            except Exception:
+                continue
+        for selector in self._all("comment_liked_state"):
+            try:
+                if await item.locator(selector).count():
+                    return True
+            except Exception:
+                continue
+        return False
+
+    async def like_own_comment(
+        self, video_url: str, comment_text: str, *, stop_event: asyncio.Event | None = None
+    ) -> bool:
+        """Like exactly one verified own comment and confirm the resulting UI state."""
+        _ensure_not_stopped(stop_event)
+        canonical = canonical_video_url(video_url)
+        if not canonical:
+            raise ValueError("A canonical TikTok video URL is required")
+        if not self.settings.tiktok_username:
+            return False
+        comments = await self.get_comments(canonical, limit=120)
+        expected = normalize_text(comment_text)
+        matches = [comment for comment in comments if normalize_text(comment.text) == expected]
+        own_matches = [comment for comment in matches if comment.is_own]
+        matches = own_matches
+        if not matches:
+            return False
+        item = await self._find_comment_item(matches[-1])
+        if not item:
+            return False
+        button = await self._first_visible(item, self._all("comment_like_button"))
+        if not button:
+            return False
+        if await self._comment_is_liked(item, button):
+            return True
+        _ensure_not_stopped(stop_event)
+        await button.click()
+        await self.page.wait_for_timeout(700)
+        if await self._comment_is_liked(item, button):
+            return True
+        # A reload distinguishes a slow UI update from an unconfirmed click.
+        await self._goto(canonical)
+        comments = await self.get_comments(canonical, limit=120)
+        refreshed = [comment for comment in comments if normalize_text(comment.text) == expected]
+        refreshed = [comment for comment in refreshed if comment.is_own]
+        if not refreshed:
+            return False
+        item = await self._find_comment_item(refreshed[-1])
+        if not item:
+            return False
+        button = await self._first_visible(item, self._all("comment_like_button"))
+        return bool(button and await self._comment_is_liked(item, button))
+
     async def post_comment(
         self,
         video_url: str,
@@ -413,8 +481,10 @@ class TikTokClient:
         *,
         image_path: Path | None = None,
         reply_to: TikTokComment | None = None,
+        stop_event: asyncio.Event | None = None,
     ) -> PublishResult:
         """Submit once. An uncertain result is never retried automatically."""
+        _ensure_not_stopped(stop_event)
         await self.start()
         canonical = canonical_video_url(video_url)
         if not canonical:
@@ -429,6 +499,7 @@ class TikTokClient:
             reply_button = await self._first_visible(item, self._all("comment_reply_button"))
             if not reply_button:
                 raise ManualActionRequired("Кнопка ответа не найдена в текущем интерфейсе TikTok")
+            _ensure_not_stopped(stop_event)
             await reply_button.click()
         comment_input = await self._first_visible(self.page, self._all("comment_input"))
         if not comment_input:
@@ -442,8 +513,14 @@ class TikTokClient:
                 raise ManualActionRequired(
                     "В веб-интерфейсе этого аккаунта не найдена загрузка фото в комментарий"
                 )
+            _ensure_not_stopped(stop_event)
             await image_input.set_input_files(str(image_path))
             await self.page.wait_for_timeout(1400)
+            preview = await self._first_visible(self.page, self._all("image_preview"))
+            if not preview:
+                raise ManualActionRequired(
+                    "Фото не подтверждено предпросмотром; комментарий не отправлен"
+                )
         await comment_input.fill(text)
         await self.page.wait_for_timeout(500)
         submit = await self._first_visible(self.page, self._all("submit"))
@@ -456,6 +533,7 @@ class TikTokClient:
                 raise ManualActionRequired("Кнопка публикации осталась неактивной")
         except AttributeError:
             pass
+        _ensure_not_stopped(stop_event)
         try:
             await submit.click()
         except Exception as exc:
@@ -478,8 +556,16 @@ class TikTokClient:
         try:
             normalized_expected = normalize_text(text)
             selector = self._css("comment_items", self._all("comment_items"))
-            bodies = await self.page.locator(selector).all_inner_texts()
-            if any(normalized_expected and normalized_expected in normalize_text(body) for body in bodies):
+            items = self.page.locator(selector)
+            for index in range(min(await items.count(), 120)):
+                item = items.nth(index)
+                body = await item.inner_text(timeout=1000)
+                if not normalized_expected or normalized_expected not in normalize_text(body):
+                    continue
+                if image_path is not None:
+                    image = await self._first_existing(item, self._all("published_comment_image"))
+                    if not image:
+                        continue
                 return PublishResult(submitted=True, verified=True)
         except Exception as exc:
             raise ManualActionRequired(
@@ -492,6 +578,13 @@ class TikTokClient:
             may_have_published=True,
         )
 
-    async def delay_between_actions(self) -> None:
+    async def delay_between_actions(self, stop_event: asyncio.Event | None = None) -> None:
         low, high = self.settings.action_delay_range
-        await asyncio.sleep(random.uniform(low, high))
+        delay = random.uniform(low, high)
+        if stop_event is None:
+            await asyncio.sleep(delay)
+            return
+        try:
+            await asyncio.wait_for(stop_event.wait(), timeout=delay)
+        except TimeoutError:
+            pass

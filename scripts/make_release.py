@@ -25,6 +25,7 @@ def release_files() -> list[Path]:
         ("rubup_bot", ("*.py",)),
         ("templates", ("*.txt",)),
         ("scripts", ("*.sh", "*.bat", "*.py")),
+        ("scripts/android", ("*.sh",)),
         ("tests", ("*.py",)),
         ("docs", ("*.md",)),
         ("images", (".gitkeep",)),

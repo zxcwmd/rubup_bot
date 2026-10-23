@@ -75,6 +75,7 @@ class Settings:
     template_dir: Path
     selectors_path: Path
     browser_profile_dir: Path
+    links_file: Path
     log_level: str
     hashtags: tuple[str, ...] = DEFAULT_TAGS
 
@@ -96,6 +97,7 @@ class Settings:
             self.image_dir,
             self.image_library_dir,
             self.browser_profile_dir,
+            self.links_file.parent,
             self.template_dir,
         ):
             directory.mkdir(parents=True, exist_ok=True)
@@ -148,5 +150,6 @@ class Settings:
             template_dir=_path(base_dir, os.getenv("TEMPLATE_DIR"), "templates"),
             selectors_path=_path(base_dir, os.getenv("SELECTORS_PATH"), "selectors.json"),
             browser_profile_dir=_path(base_dir, os.getenv("BROWSER_PROFILE_DIR"), "data/browser-profile"),
+            links_file=_path(base_dir, os.getenv("LINKS_FILE"), "data/links.txt"),
             log_level=os.getenv("LOG_LEVEL", "INFO").upper(),
         )

@@ -56,6 +56,29 @@
     "[class*='Comment'] [class*='Image'] img",
     "img[alt*='comment' i]"
   ],
+  "published_comment_image": [
+    "[data-e2e*='comment-image' i] img",
+    "[class*='CommentImage' i] img",
+    "[class*='ImageContainer' i] img",
+    "picture img",
+    "img[alt*='comment' i]"
+  ],
+  "comment_like_button": [
+    "[data-e2e='comment-like-button']",
+    "button[data-e2e*='comment-like' i]",
+    "[role='button'][data-e2e*='comment-like' i]",
+    "button[aria-label*='like' i]",
+    "[role='button'][aria-label*='like' i]",
+    "[data-e2e='comment-like-icon']"
+  ],
+  "comment_liked_state": [
+    "[data-e2e='comment-liked-icon']",
+    "[data-e2e*='comment-unlike' i]",
+    "[aria-pressed='true']",
+    "[aria-label*='unlike' i]",
+    "[aria-label*='Не нравится' i]",
+    "[class*='like' i][class*='liked' i]"
+  ],
   "submit": [
     "[data-e2e='comment-post']",
     "button[data-e2e*='comment-post' i]",

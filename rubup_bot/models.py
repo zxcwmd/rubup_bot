@@ -20,6 +20,14 @@ class ActionStatus(StrEnum):
     SKIPPED = "skipped"
 
 
+class LikeStatus(StrEnum):
+    PENDING = "pending"
+    PUBLISHING = "publishing"
+    LIKED = "liked"
+    MANUAL_REVIEW = "manual_review"
+    FAILED = "failed"
+
+
 @dataclass(slots=True)
 class Video:
     id: str
@@ -72,6 +80,10 @@ class ChallengeRequired(BotError):
 
 class SessionRequired(BotError):
     """The persistent browser profile is not authenticated."""
+
+
+class AutomationStopped(BotError):
+    """Stop arrived before an irreversible click; no publication was attempted."""
 
 
 class ManualActionRequired(BotError):

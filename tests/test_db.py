@@ -7,6 +7,7 @@ from rubup_bot.models import (
     ActionStatus,
     ActionType,
     DuplicateAction,
+    LikeStatus,
     TikTokComment,
     Video,
 )
@@ -57,12 +58,34 @@ async def test_image_is_reserved_then_used_once(db: Database, video: Video, tmp_
     assert counts == {"available": 1, "reserved": 0, "used": 1}
 
 
-async def test_report_contains_only_published_and_is_not_reused(db: Database, video: Video) -> None:
+async def test_link_requires_photo_even_with_like(db: Database, video: Video, tmp_path: Path) -> None:
     await db.upsert_video(video, eligible=True)
-    published = await db.create_action(video, ActionType.COMMENT, "Готово Реклама")
+    action_id = await db.create_action(video, ActionType.COMMENT, "Без фото Реклама")
+    await db.set_action_status(action_id, ActionStatus.PUBLISHED)
+    await db.set_like_status(action_id, LikeStatus.LIKED)
+    with pytest.raises(RuntimeError, match="Link rejected"):
+        await db.save_link(action_id, video.url, tmp_path / "links.txt")
+
+
+async def test_report_contains_only_published_and_is_not_reused(
+    db: Database, video: Video, tmp_path: Path
+) -> None:
+    await db.upsert_video(video, eligible=True)
+    image_path = tmp_path / "report.png"
+    image_path.write_bytes(b"report-image")
+    await db.add_image(path=image_path, source_path=image_path, sha256="c" * 64)
+    image = await db.next_available_image()
+    published = await db.create_action(video, ActionType.COMMENT, "Готово Реклама", image=image)
     await db.set_action_status(published, ActionStatus.PUBLISHED)
     target = TikTokComment("target", video.id, "other", "RubUP")
     await db.create_action(video, ActionType.REPLY, "Проверить Реклама", target=target)
+
+    assert await db.create_report() is None  # photo comment has no confirmed like yet
+    with pytest.raises(RuntimeError, match="Link rejected"):
+        await db.save_link(published, video.url, tmp_path / "links.txt")
+    await db.set_like_status(published, LikeStatus.LIKED)
+    assert await db.create_report() is None  # liked, but not durably saved yet
+    await db.save_link(published, video.url, tmp_path / "links.txt")
 
     report_id = await db.create_report()
     assert report_id is not None

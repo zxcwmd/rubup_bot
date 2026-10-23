@@ -13,6 +13,7 @@ from .models import (
     ActionType,
     DuplicateAction,
     ImageAsset,
+    LikeStatus,
     TikTokComment,
     Video,
 )
@@ -83,6 +84,24 @@ CREATE INDEX IF NOT EXISTS idx_actions_history ON actions(id DESC);
 CREATE INDEX IF NOT EXISTS idx_actions_report ON actions(status, report_id);
 CREATE INDEX IF NOT EXISTS idx_actions_daily ON actions(action_type, created_at);
 
+CREATE TABLE IF NOT EXISTS likes (
+    action_id INTEGER PRIMARY KEY REFERENCES actions(id) ON DELETE CASCADE,
+    status TEXT NOT NULL DEFAULT 'pending',
+    error TEXT NOT NULL DEFAULT '',
+    updated_at TEXT NOT NULL,
+    liked_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_likes_pending ON likes(status, action_id);
+
+CREATE TABLE IF NOT EXISTS saved_links (
+    action_id INTEGER PRIMARY KEY REFERENCES actions(id) ON DELETE CASCADE,
+    video_id TEXT NOT NULL REFERENCES videos(id),
+    url TEXT NOT NULL,
+    file_path TEXT NOT NULL,
+    saved_at TEXT NOT NULL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_saved_links_video ON saved_links(video_id);
+
 CREATE TABLE IF NOT EXISTS audit_log (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     event TEXT NOT NULL,
@@ -126,6 +145,20 @@ class Database:
         await self.connection.executescript(SCHEMA)
         await self.connection.execute("PRAGMA journal_mode=WAL")
         await self.connection.execute("PRAGMA busy_timeout=5000")
+        # Upgrade existing installations without weakening the new like/link gate.
+        await self.connection.execute(
+            """
+            INSERT OR IGNORE INTO likes(action_id, status, updated_at)
+            SELECT id, 'pending', updated_at FROM actions WHERE action_type='comment'
+            """
+        )
+        await self.connection.execute(
+            """
+            UPDATE likes SET status='manual_review',
+                error='Interrupted before like verification; check manually'
+            WHERE status='publishing'
+            """
+        )
         await self.connection.commit()
 
     async def close(self) -> None:
@@ -265,6 +298,11 @@ class Database:
                     ),
                 )
                 action_id = int(cursor.lastrowid)
+                if action_type == ActionType.COMMENT:
+                    await self.db.execute(
+                        "INSERT INTO likes(action_id, status, updated_at) VALUES (?, 'pending', ?)",
+                        (action_id, now),
+                    )
                 await self.db.commit()
                 return action_id
             except DuplicateAction:
@@ -291,6 +329,14 @@ class Database:
             )
             if status == ActionStatus.PUBLISHED:
                 await self.db.execute(
+                    """
+                    INSERT OR IGNORE INTO likes(action_id, status, updated_at)
+                    SELECT id, 'pending', ? FROM actions
+                    WHERE id=? AND action_type='comment'
+                    """,
+                    (now, action_id),
+                )
+                await self.db.execute(
                     "UPDATE images SET status='used', used_at=? "
                     "WHERE id=(SELECT image_id FROM actions WHERE id=?)",
                     (now, action_id),
@@ -300,9 +346,13 @@ class Database:
     async def get_action(self, action_id: int) -> dict[str, Any] | None:
         async with self.db.execute(
             """
-            SELECT a.*, v.url AS video_url, i.path AS image_path
+            SELECT a.*, v.url AS video_url, i.path AS image_path,
+                   l.status AS like_status, l.error AS like_error, l.liked_at,
+                   sl.saved_at AS link_saved_at, sl.file_path AS link_path
             FROM actions a JOIN videos v ON v.id=a.video_id
             LEFT JOIN images i ON i.id=a.image_id
+            LEFT JOIN likes l ON l.action_id=a.id
+            LEFT JOIN saved_links sl ON sl.action_id=a.id
             WHERE a.id=?
             """,
             (action_id,),
@@ -322,6 +372,66 @@ class Database:
         ) as cursor:
             rows = await cursor.fetchall()
         return [dict(row) for row in rows]
+
+    async def pending_likes(self, limit: int = 20) -> list[dict[str, Any]]:
+        async with self.db.execute(
+            """
+            SELECT a.*, v.url AS video_url, l.status AS like_status,
+                   l.error AS like_error
+            FROM actions a
+            JOIN videos v ON v.id=a.video_id
+            JOIN likes l ON l.action_id=a.id
+            LEFT JOIN saved_links sl ON sl.action_id=a.id
+            WHERE a.action_type='comment' AND a.status='published' AND a.image_id IS NOT NULL
+              AND l.status IN ('pending', 'failed', 'liked') AND sl.action_id IS NULL
+            ORDER BY a.id LIMIT ?
+            """,
+            (limit,),
+        ) as cursor:
+            rows = await cursor.fetchall()
+        return [dict(row) for row in rows]
+
+    async def set_like_status(self, action_id: int, status: LikeStatus, error: str = "") -> None:
+        now = iso_now()
+        liked_at = now if status == LikeStatus.LIKED else None
+        async with self._write_lock:
+            cursor = await self.db.execute(
+                """
+                UPDATE likes SET status=?, error=?, updated_at=?,
+                    liked_at=COALESCE(?, liked_at)
+                WHERE action_id=?
+                """,
+                (status.value, error[:4000], now, liked_at, action_id),
+            )
+            if cursor.rowcount != 1:
+                raise RuntimeError(f"No like workflow exists for action {action_id}")
+            await self.db.commit()
+
+    async def save_link(self, action_id: int, url: str, file_path: Path) -> None:
+        """Record a link only when its paid photo comment and like are both confirmed."""
+        now = iso_now()
+        async with self._write_lock:
+            cursor = await self.db.execute(
+                """
+                INSERT OR IGNORE INTO saved_links(action_id, video_id, url, file_path, saved_at)
+                SELECT a.id, a.video_id, ?, ?, ? FROM actions a
+                WHERE a.id=? AND a.action_type='comment' AND a.status='published'
+                  AND a.image_id IS NOT NULL
+                  AND EXISTS (
+                      SELECT 1 FROM likes l
+                      WHERE l.action_id=a.id AND l.status='liked'
+                  )
+                """,
+                (url, str(file_path), now, action_id),
+            )
+            await self.db.commit()
+        if cursor.rowcount == 0:
+            async with self.db.execute(
+                "SELECT 1 FROM saved_links WHERE action_id=?", (action_id,)
+            ) as existing:
+                if await existing.fetchone() is not None:
+                    return
+            raise RuntimeError("Link rejected: published photo comment or confirmed like is missing")
 
     async def requeue_waiting_for_images(self) -> int:
         async with self._write_lock:
@@ -397,7 +507,23 @@ class Database:
             "published": "SELECT COUNT(*) n FROM actions WHERE status='published'",
             "manual": "SELECT COUNT(*) n FROM actions WHERE status='manual_review'",
             "failed": "SELECT COUNT(*) n FROM actions WHERE status='failed'",
-            "unreported": "SELECT COUNT(*) n FROM actions WHERE status='published' AND report_id IS NULL",
+            "pending_likes": "SELECT COUNT(*) n FROM likes WHERE status IN ('pending', 'publishing', 'failed')",
+            "likes_manual": "SELECT COUNT(*) n FROM likes WHERE status='manual_review'",
+            "pending_links": """
+                SELECT COUNT(*) n FROM actions a
+                JOIN likes l ON l.action_id=a.id
+                LEFT JOIN saved_links sl ON sl.action_id=a.id
+                WHERE a.status='published' AND l.status='liked' AND sl.action_id IS NULL
+            """,
+            "links": "SELECT COUNT(*) n FROM saved_links",
+            "unreported": """
+                SELECT COUNT(*) n FROM actions a
+                WHERE a.status='published' AND a.report_id IS NULL
+                  AND (a.action_type='reply' OR (
+                      EXISTS(SELECT 1 FROM likes l WHERE l.action_id=a.id AND l.status='liked')
+                      AND EXISTS(SELECT 1 FROM saved_links sl WHERE sl.action_id=a.id)
+                  ))
+            """,
         }
         result: dict[str, int] = {}
         for key, query in queries.items():
@@ -411,8 +537,13 @@ class Database:
     async def history(self, limit: int = 10, offset: int = 0) -> list[dict[str, Any]]:
         async with self.db.execute(
             """
-            SELECT a.*, v.url AS video_url FROM actions a
-            JOIN videos v ON v.id=a.video_id ORDER BY a.id DESC LIMIT ? OFFSET ?
+            SELECT a.*, v.url AS video_url, l.status AS like_status,
+                   sl.saved_at AS link_saved_at
+            FROM actions a
+            JOIN videos v ON v.id=a.video_id
+            LEFT JOIN likes l ON l.action_id=a.id
+            LEFT JOIN saved_links sl ON sl.action_id=a.id
+            ORDER BY a.id DESC LIMIT ? OFFSET ?
             """,
             (limit, offset),
         ) as cursor:
@@ -421,7 +552,15 @@ class Database:
 
     async def unreported_action_ids(self) -> list[int]:
         async with self.db.execute(
-            "SELECT id FROM actions WHERE status='published' AND report_id IS NULL ORDER BY id"
+            """
+            SELECT a.id FROM actions a
+            WHERE a.status='published' AND a.report_id IS NULL
+              AND (a.action_type='reply' OR (
+                  EXISTS(SELECT 1 FROM likes l WHERE l.action_id=a.id AND l.status='liked')
+                  AND EXISTS(SELECT 1 FROM saved_links sl WHERE sl.action_id=a.id)
+              ))
+            ORDER BY a.id
+            """
         ) as cursor:
             rows = await cursor.fetchall()
         return [int(row["id"]) for row in rows]
@@ -444,7 +583,15 @@ class Database:
                     await self.db.commit()
                     return int(existing[0]["id"])
                 rows = await self.db.execute_fetchall(
-                    "SELECT id FROM actions WHERE status='published' AND report_id IS NULL ORDER BY id"
+                    """
+                    SELECT a.id FROM actions a
+                    WHERE a.status='published' AND a.report_id IS NULL
+                      AND (a.action_type='reply' OR (
+                          EXISTS(SELECT 1 FROM likes l WHERE l.action_id=a.id AND l.status='liked')
+                          AND EXISTS(SELECT 1 FROM saved_links sl WHERE sl.action_id=a.id)
+                      ))
+                    ORDER BY a.id
+                    """
                 )
                 if not rows:
                     await self.db.commit()
@@ -470,7 +617,12 @@ class Database:
         async with self.db.execute(
             """
             SELECT v.url FROM actions a JOIN videos v ON v.id=a.video_id
-            WHERE a.report_id=? AND a.status='published' ORDER BY a.id
+            WHERE a.report_id=? AND a.status='published'
+              AND (a.action_type='reply' OR (
+                  EXISTS(SELECT 1 FROM likes l WHERE l.action_id=a.id AND l.status='liked')
+                  AND EXISTS(SELECT 1 FROM saved_links sl WHERE sl.action_id=a.id)
+              ))
+            ORDER BY a.id
             """,
             (report_id,),
         ) as cursor:

@@ -10,12 +10,15 @@ from typing import Any, Protocol
 from .config import Settings
 from .db import Database
 from .images import ImageLibrary
+from .links import LinkStore
 from .models import (
     ActionStatus,
     ActionType,
+    AutomationStopped,
     BotError,
     ChallengeRequired,
     DuplicateAction,
+    LikeStatus,
     ManualActionRequired,
     SessionRequired,
     TikTokComment,
@@ -47,6 +50,7 @@ class AutomationService:
         self.db = db
         self.client = TikTokClient(settings)
         self.images = ImageLibrary(settings.image_dir, settings.image_library_dir, db)
+        self.links = LinkStore(settings.links_file)
         self.generator = CommentGenerator(
             settings.template_dir,
             settings.ad_disclosure,
@@ -60,6 +64,7 @@ class AutomationService:
         )
         self.sink: EventSink = NullSink()
         self._wake = asyncio.Event()
+        self._stop_event = asyncio.Event()
         self._operation_lock = asyncio.Lock()
         self._scheduler_task: asyncio.Task[None] | None = None
 
@@ -75,12 +80,27 @@ class AutomationService:
         return await self.db.get_setting("auto_enabled", "0") == "1"
 
     async def start_automation(self) -> None:
+        self._stop_event.clear()
         await self.db.set_setting("auto_enabled", "1")
         self._wake.set()
 
     async def pause_automation(self) -> None:
         await self.db.set_setting("auto_enabled", "0")
         self._wake.set()
+
+    async def force_stop(self) -> None:
+        """Block new work immediately, then close Chromium after the active call."""
+        self._stop_event.set()
+        await self.db.set_setting("auto_enabled", "0")
+        self._wake.set()
+        # _locked() never queues competing browser operations, so taking this
+        # lock waits only for the active operation and excludes later ones.
+        async with self._operation_lock:
+            await self.client.close()
+
+    def _ensure_not_stopped(self) -> None:
+        if self._stop_event.is_set():
+            raise BotError("Принудительная остановка активна. Нажмите «Старт» для нового запуска.")
 
     async def get_tags(self) -> list[str]:
         raw = await self.db.get_setting("tags")
@@ -141,6 +161,7 @@ class AutomationService:
                 pass
 
     async def close(self) -> None:
+        self._stop_event.set()
         if self._scheduler_task:
             self._scheduler_task.cancel()
             try:
@@ -153,8 +174,12 @@ class AutomationService:
         if self._operation_lock.locked():
             raise BotError("Другая операция с браузером уже выполняется")
         await self._operation_lock.acquire()
+        if self._stop_event.is_set():
+            self._operation_lock.release()
+            raise BotError("Принудительная остановка активна. Нажмите «Старт» для нового запуска.")
 
     async def check_session(self) -> tuple[bool, str]:
+        self._ensure_not_stopped()
         await self._locked()
         try:
             return await self.client.check_session()
@@ -162,6 +187,7 @@ class AutomationService:
             self._operation_lock.release()
 
     async def discover_once(self) -> dict[str, int]:
+        self._ensure_not_stopped()
         await self._locked()
         try:
             await self.client.ensure_authenticated()
@@ -170,6 +196,7 @@ class AutomationService:
             self._operation_lock.release()
 
     async def add_video(self, url: str) -> tuple[Video, bool, str]:
+        self._ensure_not_stopped()
         await self._locked()
         try:
             await self.client.ensure_authenticated()
@@ -183,12 +210,15 @@ class AutomationService:
             self._operation_lock.release()
 
     async def run_cycle(self) -> dict[str, int]:
+        self._ensure_not_stopped()
         await self._locked()
         try:
             await self.scan_images()
             await self.client.ensure_authenticated()
+            attempts = await self._retry_likes(self.settings.max_actions_per_cycle)
             discovery = await self._discover()
-            attempts = await self._retry_pending(self.settings.max_actions_per_cycle)
+            if attempts < self.settings.max_actions_per_cycle:
+                attempts += await self._retry_pending(self.settings.max_actions_per_cycle - attempts)
             if attempts < self.settings.max_actions_per_cycle:
                 attempts += await self._process_queue(self.settings.max_actions_per_cycle - attempts)
             return {**discovery, "attempts": attempts}
@@ -208,6 +238,8 @@ class AutomationService:
         details_budget = self.settings.max_video_details_per_cycle
         allowed = set(tags)
         for tag in selected:
+            if self._stop_event.is_set():
+                break
             if details_budget <= 0:
                 break
             try:
@@ -218,6 +250,8 @@ class AutomationService:
                 logger.warning("Discovery failed for #%s: %s", tag, exc)
                 continue
             for url in urls:
+                if self._stop_event.is_set():
+                    break
                 if details_budget <= 0:
                     break
                 canonical = canonical_video_url(url)
@@ -249,6 +283,76 @@ class AutomationService:
             text=action["target_text"],
         )
 
+    async def _retry_likes(self, budget: int) -> int:
+        attempts = 0
+        if budget <= 0:
+            return attempts
+        for action in await self.db.pending_likes(budget):
+            if self._stop_event.is_set() or not await self.is_enabled():
+                break
+            video = await self.db.get_video(action["video_id"])
+            if not video:
+                await self.db.set_like_status(
+                    action["id"], LikeStatus.FAILED, "Видео отсутствует в БД"
+                )
+                continue
+            await self._like_and_save(action, video)
+            attempts += 1
+            await self.client.delay_between_actions(self._stop_event)
+        return attempts
+
+    async def _like_and_save(self, action: dict[str, Any], video: Video) -> None:
+        if self._stop_event.is_set():
+            return
+        action_id = int(action["id"])
+        current = await self.db.get_action(action_id)
+        if not current or current["status"] != ActionStatus.PUBLISHED.value:
+            return
+        if current.get("link_saved_at"):
+            return
+        if not current.get("image_id"):
+            await self.db.set_like_status(
+                action_id, LikeStatus.MANUAL_REVIEW, "У основного комментария нет обязательного изображения"
+            )
+            return
+        canonical = canonical_video_url(video.url)
+        if not canonical:
+            await self.db.set_like_status(
+                action_id, LikeStatus.MANUAL_REVIEW, "Неканоническая ссылка на видео"
+            )
+            return
+        if current.get("like_status") != LikeStatus.LIKED.value:
+            await self.db.set_like_status(action_id, LikeStatus.PUBLISHING)
+            try:
+                liked = await self.client.like_own_comment(
+                    canonical, current["text"], stop_event=self._stop_event
+                )
+            except AutomationStopped as exc:
+                await self.db.set_like_status(action_id, LikeStatus.PENDING, str(exc))
+                return
+            except (ChallengeRequired, SessionRequired) as exc:
+                await self.db.set_like_status(action_id, LikeStatus.PENDING, str(exc))
+                raise
+            except Exception as exc:
+                await self.db.set_like_status(action_id, LikeStatus.FAILED, str(exc))
+                await self.db.audit("like_failed", f"action={action_id}; {exc}")
+                await self.sink.action_event(action_id, "like_failed", str(exc))
+                return
+            if not liked:
+                detail = "Лайк собственного комментария не подтверждён; ссылка не сохранена"
+                await self.db.set_like_status(action_id, LikeStatus.MANUAL_REVIEW, detail)
+                await self.db.audit("like_manual", f"action={action_id}")
+                await self.sink.action_event(action_id, "like_manual", detail)
+                return
+            await self.db.set_like_status(action_id, LikeStatus.LIKED)
+
+        # If a previous run stopped after the like but before the file/database
+        # write, this branch finishes the durable save without liking again.
+        await self.links.append(canonical)
+        await self.db.save_link(action_id, canonical, self.settings.links_file)
+        await self.db.audit("link_saved", f"action={action_id}; video={canonical}")
+        await self.sink.action_event(action_id, "completed", canonical)
+
     async def _retry_pending(self, budget: int) -> int:
         attempts = 0
         if budget <= 0:
@@ -262,7 +366,7 @@ class AutomationService:
                 continue
             await self._publish_existing(action, video)
             attempts += 1
-            await self.client.delay_between_actions()
+            await self.client.delay_between_actions(self._stop_event)
         return attempts
 
     async def _process_queue(self, budget: int) -> int:
@@ -328,7 +432,7 @@ class AutomationService:
             replies_today += 1
             replies_here += 1
             previous_targets.append(target.text)
-            await self.client.delay_between_actions()
+            await self.client.delay_between_actions(self._stop_event)
             if attempts >= budget:
                 break
 
@@ -354,21 +458,33 @@ class AutomationService:
         assert action is not None
         await self._publish_existing(action, video)
         attempts += 1
-        await self.client.delay_between_actions()
+        await self.client.delay_between_actions(self._stop_event)
         return attempts
 
     async def _publish_existing(self, action: dict[str, Any], video: Video) -> None:
+        if self._stop_event.is_set():
+            return
         action_id = int(action["id"])
         action_type = ActionType(action["action_type"])
-        await self.db.set_action_status(action_id, ActionStatus.PUBLISHING)
         image_path = action.get("image_path")
+        if action_type == ActionType.COMMENT and not image_path:
+            detail = "Для основного комментария обязательно новое изображение"
+            await self.db.set_action_status(action_id, ActionStatus.MANUAL_REVIEW, detail)
+            await self.db.set_video_state(video.id, "attention", detail)
+            await self.sink.action_event(action_id, "manual", detail)
+            return
+        await self.db.set_action_status(action_id, ActionStatus.PUBLISHING)
         try:
             result = await self.client.post_comment(
                 video.url,
                 action["text"],
                 image_path=Path(image_path) if image_path else None,
                 reply_to=self._target_from_action(action),
+                stop_event=self._stop_event,
             )
+        except AutomationStopped as exc:
+            await self.db.set_action_status(action_id, ActionStatus.PENDING, str(exc))
+            return
         except ManualActionRequired as exc:
             await self.db.set_action_status(action_id, ActionStatus.MANUAL_REVIEW, str(exc))
             if action_type == ActionType.COMMENT:
@@ -404,6 +520,8 @@ class AutomationService:
             await self.db.set_video_state(video.id, "processed")
         await self.db.audit("published", f"action={action_id}; video={video.url}")
         await self.sink.action_event(action_id, "published")
+        if action_type == ActionType.COMMENT:
+            await self._like_and_save(action, video)
 
     async def resolve_manual(self, action_id: int, published: bool) -> None:
         action = await self.db.get_action(action_id)
@@ -421,6 +539,32 @@ class AutomationService:
                 "" if published else "Ручная публикация не подтверждена",
             )
         await self.db.audit("manual_resolved", f"action={action_id}; published={published}")
+        if published and action["action_type"] == ActionType.COMMENT.value:
+            # The next enabled cycle performs the like before saving the link.
+            self._wake.set()
+
+    async def retry_like(self, action_id: int) -> None:
+        self._ensure_not_stopped()
+        action = await self.db.get_action(action_id)
+        if not action or action["action_type"] != ActionType.COMMENT.value:
+            raise BotError("Основной комментарий не найден")
+        if action["status"] != ActionStatus.PUBLISHED.value:
+            raise BotError("Сначала подтвердите публикацию комментария")
+        if action.get("link_saved_at"):
+            raise BotError("Лайк и сохранение ссылки уже завершены")
+        if action.get("like_status") not in {
+            LikeStatus.PENDING.value, LikeStatus.FAILED.value, LikeStatus.MANUAL_REVIEW.value
+        }:
+            raise BotError("Текущее состояние лайка не позволяет повторить проверку")
+        await self._locked()
+        try:
+            video = await self.db.get_video(action["video_id"])
+            if not video:
+                raise BotError("Видео отсутствует в БД")
+            await self.db.set_like_status(action_id, LikeStatus.PENDING, "Ручная повторная проверка")
+            await self._like_and_save(action, video)
+        finally:
+            self._operation_lock.release()
 
     async def retry_failed(self, action_id: int) -> None:
         action = await self.db.get_action(action_id)

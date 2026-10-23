@@ -4,12 +4,15 @@ import asyncio
 import logging
 import re
 from collections.abc import Awaitable, Callable
+from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 from aiogram import BaseMiddleware, Bot, Dispatcher, F, Router
 from aiogram.filters import Command, CommandStart
 from aiogram.types import (
     CallbackQuery,
+    FSInputFile,
     InlineKeyboardButton,
     InlineKeyboardMarkup,
     KeyboardButton,
@@ -28,12 +31,14 @@ logger = logging.getLogger(__name__)
 BUTTONS = {
     "start": "▶️ Авто",
     "pause": "⏸ Пауза",
+    "stop": "⛔ Стоп",
     "status": "📊 Статус",
     "discover": "🔎 Найти видео",
     "images": "🖼 Картинки",
     "history": "📝 История",
     "report": "📤 Отправить отчет",
     "reports": "🗂 Отчеты",
+    "links": "🔗 Ссылки",
     "session": "✅ Мой TikTok",
     "tags": "🏷 Теги",
     "help": "ℹ️ Помощь",
@@ -41,15 +46,18 @@ BUTTONS = {
 
 HELP = """RubUP Comment Bot
 
-Автоматизация: ▶️ Авто — запуск, ⏸ Пауза — остановка после текущей операции.
-Перед запуском: выполните `python -m rubup_bot login` на компьютере, добавьте JPG/PNG/WEBP в папку images и проверьте ✅ Мой TikTok.
+▶️ Авто — запуск; ⏸ Пауза — не начинать новые циклы; ⛔ Стоп — сразу запретить новые действия, дождаться текущего вызова и закрыть Chromium.
+Основной комментарий завершён только после подтверждения фото, лайка своего комментария и сохранения ссылки в data/links.txt.
+Картинки можно отправить боту фотографией или файлом (JPG/PNG/WEBP).
 
 Команды:
 /add ССЫЛКА — добавить конкретное видео в очередь
 /set_tags тег1 тег2 — заменить список тегов
 /history — последние действия
-/report — отправить только ссылки на опубликованные действия
+/links — скачать файл сохранённых ссылок
+/report — отправить только ссылки на полностью подтверждённые действия
 /reports — история отчётов
+/retry_like ID — повторно проверить лайк своего комментария
 /retry ID — повторить только действие, которое точно НЕ опубликовано
 
 Ответы создаются только под чужими комментариями, распознанными по RUBUP_COMMENT_MARKERS. Произвольный комментарий с фото автоматически RubUP-комментарием не считается.
@@ -88,10 +96,12 @@ class AdminMiddleware(BaseMiddleware):
 def main_keyboard() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
         keyboard=[
-            [KeyboardButton(text=BUTTONS["start"]), KeyboardButton(text=BUTTONS["pause"])],
+            [KeyboardButton(text=BUTTONS["start"]), KeyboardButton(text=BUTTONS["pause"]),
+             KeyboardButton(text=BUTTONS["stop"])],
             [KeyboardButton(text=BUTTONS["status"]), KeyboardButton(text=BUTTONS["discover"])],
             [KeyboardButton(text=BUTTONS["images"]), KeyboardButton(text=BUTTONS["history"])],
-            [KeyboardButton(text=BUTTONS["report"]), KeyboardButton(text=BUTTONS["reports"])],
+            [KeyboardButton(text=BUTTONS["report"]), KeyboardButton(text=BUTTONS["reports"]),
+             KeyboardButton(text=BUTTONS["links"])],
             [KeyboardButton(text=BUTTONS["session"]), KeyboardButton(text=BUTTONS["tags"])],
             [KeyboardButton(text=BUTTONS["help"])],
         ],
@@ -103,6 +113,12 @@ def manual_keyboard(action_id: int) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[[
         InlineKeyboardButton(text="✅ Опубликовано", callback_data=f"manual:{action_id}:yes"),
         InlineKeyboardButton(text="❌ Не опубликовано", callback_data=f"manual:{action_id}:no"),
+    ]])
+
+
+def like_keyboard(action_id: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(text="🔄 Проверить лайк ещё раз", callback_data=f"like:{action_id}:retry")
     ]])
 
 
@@ -147,7 +163,22 @@ class TelegramUI:
         kind = "Комментарий" if action["action_type"] == "comment" else "Ответ"
         if event == "published":
             text = f"✅ {kind} #{action_id} опубликован\n{action['video_url']}"
+            if action["action_type"] == "comment":
+                text += "\nДалее: проверка лайка и сохранение ссылки."
             keyboard = None
+        elif event == "completed":
+            text = (
+                f"✅ Основной комментарий #{action_id} завершён: фото и лайк подтверждены, "
+                f"ссылка сохранена\n{action['video_url']}"
+            )
+            keyboard = None
+        elif event in {"like_manual", "like_failed"}:
+            text = (
+                f"⚠️ Комментарий #{action_id} опубликован, но лайк/ссылка не завершены\n"
+                f"{action['video_url']}\n{detail}\n\n"
+                "Ссылка в файл не добавлена. Проверьте лайк на телефоне и повторите проверку."
+            )
+            keyboard = like_keyboard(action_id)
         elif event == "manual":
             text = (
                 f"⚠️ {kind} #{action_id}: нужна ручная проверка\n"
@@ -156,7 +187,7 @@ class TelegramUI:
             )
             if action.get("image_path"):
                 text += f"Картинка: {action['image_path']}\n"
-            text += "\nПроверьте видео и выберите результат. Не публикуйте повторно, если комментарий уже есть."
+            text += "\nПроверьте видео и выберите результат. Для основного комментария проверьте и наличие фото. Не публикуйте повторно, если комментарий уже есть."
             keyboard = manual_keyboard(action_id)
         elif event == "pending":
             text = f"⏸ {kind} #{action_id} сохранён для безопасного продолжения: {detail}"
@@ -179,6 +210,8 @@ class TelegramUI:
             f"Автоматика: {'▶️ включена' if status['enabled'] else '⏸ на паузе'}\n"
             f"Видео: {status['videos']} (в очереди {status['queued']})\n"
             f"Опубликовано: {status['published']}; ручная проверка: {status['manual']}; ошибки: {status['failed']}\n"
+            f"Лайки: ожидают {status['pending_likes']}, ручная проверка {status['likes_manual']}; "
+            f"ссылки в файле {status['links']}, ожидают записи {status['pending_links']}\n"
             f"Сегодня: комментарии {status['comments_today']}/{self.settings.max_comments_per_day}, "
             f"ответы {status['replies_today']}/{self.settings.max_replies_per_day}\n"
             f"Картинки: новые {status['images_available']}, зарезервированы {status['images_reserved']}, "
@@ -197,10 +230,15 @@ class TelegramUI:
             text = row["text"]
             if len(text) > 90:
                 text = text[:87] + "..."
-            chunks.append(
+            item = (
                 f"#{row['id']} {STATUS_LABELS.get(row['status'], row['status'])} {kind}\n"
                 f"{row['video_url']}\n{text}"
             )
+            if row["action_type"] == "comment":
+                like_status = row.get("like_status") or "—"
+                link_status = "✅ сохранена" if row.get("link_saved_at") else "⏳ не сохранена"
+                item += f"\nЛайк: {like_status}; ссылка: {link_status}"
+            chunks.append(item)
         await message.answer("\n\n".join(chunks)[:4000])
 
     async def _send_report(self, message: Message) -> None:
@@ -232,6 +270,32 @@ class TelegramUI:
             )
         await self.db.mark_report_sent(report_id)
 
+    async def _receive_image(
+        self, message: Message, *, file_id: str, extension: str, file_size: int | None
+    ) -> None:
+        if extension not in {".jpg", ".jpeg", ".png", ".webp"}:
+            await message.answer("Поддерживаются только JPG/JPEG/PNG/WEBP.")
+            return
+        if file_size and file_size > 20 * 1024 * 1024:
+            await message.answer("Файл больше 20 МБ; Telegram Bot API не позволит скачать его.")
+            return
+        self.settings.image_dir.mkdir(parents=True, exist_ok=True)
+        destination = self.settings.image_dir / f"telegram-{uuid4().hex}{extension}"
+        try:
+            file = await self.bot.get_file(file_id)
+            if not file.file_path:
+                raise ValueError("Telegram не вернул путь к файлу")
+            await self.bot.download_file(file.file_path, destination=destination)
+            result = await self.service.scan_images()
+        except Exception as exc:
+            destination.unlink(missing_ok=True)
+            await message.answer(f"Не удалось сохранить картинку: {type(exc).__name__}: {exc}")
+            return
+        await message.answer(
+            f"Картинка получена. Добавлено: {result.added}; дубликаты: {result.duplicates}; "
+            f"не поддерживается/повреждена: {result.invalid}."
+        )
+
     def _register_handlers(self) -> None:
         router = self.router
 
@@ -252,6 +316,13 @@ class TelegramUI:
         async def pause(message: Message) -> None:
             await self.service.pause_automation()
             await message.answer("Автоматика поставлена на паузу после текущей операции.")
+
+        @router.message(Command("stop"))
+        @router.message(F.text == BUTTONS["stop"])
+        async def stop(message: Message) -> None:
+            await message.answer("⛔ Останавливаю: новые действия запрещены, жду завершения текущего вызова…")
+            await self.service.force_stop()
+            await message.answer("⛔ Остановлено. Chromium закрыт. Для нового запуска нажмите ▶️ Авто.")
 
         @router.message(Command("status"))
         @router.message(F.text == BUTTONS["status"])
@@ -286,6 +357,21 @@ class TelegramUI:
 
             self._background(operation())
 
+        @router.message(F.photo)
+        async def receive_photo(message: Message) -> None:
+            photo = message.photo[-1]
+            await self._receive_image(
+                message, file_id=photo.file_id, extension=".jpg", file_size=photo.file_size
+            )
+
+        @router.message(F.document)
+        async def receive_document(message: Message) -> None:
+            document = message.document
+            extension = Path(document.file_name or "").suffix.lower()
+            await self._receive_image(
+                message, file_id=document.file_id, extension=extension, file_size=document.file_size
+            )
+
         @router.message(Command("history"))
         @router.message(F.text == BUTTONS["history"])
         async def history(message: Message) -> None:
@@ -309,6 +395,18 @@ class TelegramUI:
                 for row in rows
             ]
             await message.answer("\n".join(lines))
+
+        @router.message(Command("links"))
+        @router.message(F.text == BUTTONS["links"])
+        async def links(message: Message) -> None:
+            path = self.settings.links_file
+            if not path.is_file() or not path.read_text(encoding="utf-8").strip():
+                await message.answer("Файл ссылок пока пуст. Ссылка сохраняется только после фото-комментария и подтверждённого лайка.")
+                return
+            await message.answer_document(
+                FSInputFile(path),
+                caption=f"Сохранённые ссылки: {path}",
+            )
 
         @router.message(Command("session"))
         @router.message(F.text == BUTTONS["session"])
@@ -355,6 +453,23 @@ class TelegramUI:
                 f"Действие #{action_id} поставлено в очередь. Используйте повтор только если публикации точно нет."
             )
 
+        @router.message(Command("retry_like"))
+        async def retry_like(message: Message) -> None:
+            try:
+                action_id = int((message.text or "").split()[1])
+            except (IndexError, ValueError):
+                await message.answer("Использование: /retry_like ID")
+                return
+            await message.answer("Повторно проверяю лайк; ссылка будет сохранена только после подтверждения.")
+
+            async def operation() -> None:
+                try:
+                    await self.service.retry_like(action_id)
+                except BotError as exc:
+                    await self.info(str(exc))
+
+            self._background(operation())
+
         @router.message(Command("add"))
         async def add_command(message: Message) -> None:
             url = (message.text or "").partition(" ")[2].strip()
@@ -368,6 +483,12 @@ class TelegramUI:
             match = re.search(r"https?://[^\s]*tiktok\.com/[^\s]+", message.text or "")
             if match:
                 await self._add_video(message, match.group(0).rstrip("),.;!"))
+
+        @router.callback_query(F.data.regexp(r"^like:\d+:retry$"))
+        async def retry_like_callback(callback: CallbackQuery) -> None:
+            _, raw_id, _ = (callback.data or "").split(":")
+            await callback.answer("Проверка запущена")
+            self._background(self.service.retry_like(int(raw_id)))
 
         @router.callback_query(F.data.regexp(r"^manual:\d+:(yes|no)$"))
         async def resolve_manual(callback: CallbackQuery) -> None:

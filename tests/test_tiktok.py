@@ -1,6 +1,15 @@
+import asyncio
 from datetime import UTC
 
-from rubup_bot.tiktok import _timestamp, canonical_video_url, video_id_from_url
+import pytest
+
+from rubup_bot.models import AutomationStopped
+from rubup_bot.tiktok import (
+    _ensure_not_stopped,
+    _timestamp,
+    canonical_video_url,
+    video_id_from_url,
+)
 
 
 def test_canonical_video_url_strips_tracking() -> None:
@@ -21,3 +30,11 @@ def test_timestamp_supports_seconds_and_milliseconds() -> None:
     assert seconds == milliseconds
     assert seconds.tzinfo == UTC
     assert _timestamp("bad") is None
+
+
+def test_stop_guard_blocks_irreversible_click() -> None:
+    stop_event = asyncio.Event()
+    _ensure_not_stopped(stop_event)
+    stop_event.set()
+    with pytest.raises(AutomationStopped, match="до нажатия"):
+        _ensure_not_stopped(stop_event)
