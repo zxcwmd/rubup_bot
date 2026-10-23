@@ -76,6 +76,11 @@ class InstalledTikTokAdapter(
     private val images: ImageLibrary,
 ) : TikTokOperations {
     private var currentVideoUrl: String? = null
+    var progressListener: ((String) -> Unit)? = null
+
+    private fun progress(text: String) {
+        progressListener?.invoke(text)
+    }
 
     private fun accessibility(): TikTokAccessibilityService {
         if (!TikTokAccessibilityService.isReady()) {
@@ -169,15 +174,24 @@ class InstalledTikTokAdapter(
         if (action.actionType == ActionType.COMMENT) {
             if (image == null) throw ManualActionRequired("Для основного комментария обязательна новая картинка")
             stopCheck()
+            progress("Действие #${action.id}: прикрепляю обязательное фото…")
             attachPhoto(image)
         }
+        progress("Действие #${action.id}: ввожу текст комментария…")
         val input = service.snapshot().nodes.firstOrNull(::isTikTokCommentInput)
             ?: throw ManualActionRequired("Поле комментария в TikTok не найдено или не распознано")
         if (!service.setTextPath(input.path, action.text)) {
             throw ManualActionRequired("Android не разрешил ввести текст в поле комментария")
         }
         Thread.sleep(400)
+        val filled = service.snapshot().nodes.firstOrNull(::isTikTokCommentInput)
+        val actualText = filled?.text?.trim().orEmpty()
+        if (actualText != action.text.trim() && normalizeText(actualText) != normalizeText(action.text)) {
+            throw ManualActionRequired("TikTok не подтвердил введённый текст; публикация не нажималась")
+        }
         stopCheck()
+        val ready = if (action.actionType == ActionType.COMMENT) "фото и текст готовы" else "текст ответа готов"
+        progress("Действие #${action.id}: $ready, нажимаю публикацию…")
         try {
             if (!clickSubmit()) throw ManualActionRequired("Кнопка публикации в TikTok не найдена или неактивна")
         } catch (error: ManualActionRequired) {
@@ -185,6 +199,7 @@ class InstalledTikTokAdapter(
         } catch (error: Exception) {
             throw ManualActionRequired("Нажатие публикации не подтверждено: ${error.message}", true)
         }
+        progress("Действие #${action.id}: нажатие выполнено, проверяю опубликованный комментарий…")
         try {
             Thread.sleep(2800)
             checkChallenge()
@@ -221,6 +236,7 @@ class InstalledTikTokAdapter(
         if (isLiked(initial)) return true
         val like = initial.flatten().firstOrNull { isLikeNode(it) } ?: return false
         stopCheck()
+        progress("Действие #${action.id}: нажимаю лайк именно своего комментария…")
         val clicked = try { service.clickPath(like.path) } catch (_: Exception) { return false }
         if (!clicked) return false
         return try {
@@ -247,6 +263,7 @@ class InstalledTikTokAdapter(
 
     private fun openVideo(canonical: String) {
         val service = accessibility()
+        progress("TikTok: открываю видео\n$canonical")
         val packageName = TikTokAppLauncher.open(context, canonical)
         if (!service.waitForPackage(setOf(packageName), 25)) {
             throw BotFailure("TikTok не открыл видео в установленном приложении")
@@ -259,10 +276,18 @@ class InstalledTikTokAdapter(
     private fun openComments() {
         val service = accessibility()
         checkChallenge()
-        val snapshot = service.snapshot()
-        if (snapshot.nodes.any(::isTikTokCommentInput)) return
-        val clicked = service.clickFirst(::isTikTokCommentEntry)
-        if (clicked) Thread.sleep(1000)
+        if (service.snapshot().nodes.any(::isTikTokCommentInput)) return
+        progress("TikTok: открываю панель комментариев…")
+        if (!service.clickFirst(::isTikTokCommentEntry)) {
+            throw ManualActionRequired("Кнопка комментариев в открытом видео не распознана")
+        }
+        val deadline = System.currentTimeMillis() + 8000
+        while (System.currentTimeMillis() < deadline) {
+            Thread.sleep(300)
+            if (service.snapshot().nodes.any(::isTikTokCommentInput)) return
+        }
+        checkChallenge()
+        throw ManualActionRequired("Кнопка комментариев нажата, но поле ввода не появилось или не распознано")
     }
 
     private fun readComments(canonical: String, limit: Int): List<TikTokComment> {

@@ -22,6 +22,12 @@ class AutomationEngine(
     } else {
         TikTokAdapter(runtime, settings)
     }
+    init {
+        (adapter as? InstalledTikTokAdapter)?.progressListener = { text ->
+            settings.tiktokDiagnostic = text
+            info(text)
+        }
+    }
     private val textEngine = TextEngine(context)
     private val links = LinkStore(File(context.filesDir, "links.txt"))
     private val browserLock = ReentrantLock()
@@ -29,6 +35,7 @@ class AutomationEngine(
     private val wake = Object()
     @Volatile private var running = true
     @Volatile private var stopRequested = false
+    private var workRequested = false
     private var scheduler: Thread? = null
 
     var infoListener: ((String) -> Unit)? = null
@@ -49,7 +56,8 @@ class AutomationEngine(
             }
             try {
                 val result = browserCall { runCycle() }
-                info("Цикл завершён: новых видео ${result.first}, попыток ${result.second}.")
+                val remaining = db.stats()["queued"] ?: 0
+                info("Цикл завершён: новых видео ${result.first}, попыток ${result.second}, в очереди $remaining.")
             } catch (error: SessionRequired) {
                 settings.autoEnabled = false
                 info("⏸ Автоматика на паузе: ${error.message}")
@@ -67,11 +75,21 @@ class AutomationEngine(
 
     private fun waitForWake(milliseconds: Long) {
         synchronized(wake) {
+            if (workRequested) {
+                workRequested = false
+                return
+            }
             try { wake.wait(milliseconds) } catch (_: InterruptedException) { Thread.currentThread().interrupt() }
+            if (workRequested) workRequested = false
         }
     }
 
     private fun wake() = synchronized(wake) { wake.notifyAll() }
+
+    private fun requestWork() = synchronized(wake) {
+        workRequested = true
+        wake.notifyAll()
+    }
 
     fun shutdown() {
         running = false
@@ -85,7 +103,11 @@ class AutomationEngine(
     fun startAuto() {
         stopRequested = false
         settings.autoEnabled = true
-        wake()
+        requestWork()
+    }
+
+    fun notifyWorkAvailable() {
+        if (settings.autoEnabled) requestWork()
     }
 
     fun pauseAuto() {
@@ -142,6 +164,7 @@ class AutomationEngine(
         }
         val (video, decision) = result
         info(if (decision.first) "Видео добавлено: ${video.url}" else "Видео пропущено: ${decision.second}\n${video.url}")
+        if (decision.first) notifyWorkAvailable()
     }
 
     fun checkSession() = submit {
@@ -152,11 +175,18 @@ class AutomationEngine(
     private fun runCycle(): Pair<Int, Int> {
         checkNotStopped()
         adapter.ensureAuthenticated()
+        val stats = db.stats()
+        info("Цикл начат: в очереди ${stats["queued"]}, новых картинок ${stats["images_available"]}.")
         var attempts = retryLikes(Defaults.MAX_ACTIONS_PER_CYCLE)
-        val discovery = discover()
         if (attempts < Defaults.MAX_ACTIONS_PER_CYCLE) {
             attempts += retryPending(Defaults.MAX_ACTIONS_PER_CYCLE - attempts)
         }
+        // Work already queued by /add must not wait for network discovery.
+        if (attempts < Defaults.MAX_ACTIONS_PER_CYCLE) {
+            attempts += processQueue(Defaults.MAX_ACTIONS_PER_CYCLE - attempts)
+        }
+        val discovery = if (attempts < Defaults.MAX_ACTIONS_PER_CYCLE) discover() else 0 to 0
+        // Videos found in this cycle are handled immediately after discovery.
         if (attempts < Defaults.MAX_ACTIONS_PER_CYCLE) {
             attempts += processQueue(Defaults.MAX_ACTIONS_PER_CYCLE - attempts)
         }

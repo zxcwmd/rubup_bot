@@ -79,7 +79,7 @@ class MainActivity : Activity() {
         nativePanel = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         nativePanel.addView(button("1. Включить Accessibility для RubUP") { openAccessibilitySettings() })
         nativePanel.addView(button("2. Открыть установленный TikTok") { openInstalledTikTok() })
-        nativePanel.addView(button("3. Проверить управление (без публикации)") { testTikTokControl() })
+        nativePanel.addView(button("3. Тест: только открыть строку комментария") { testTikTokControl() })
         panel.addView(nativePanel)
         webLoginButton = button("Войти в TikTok через WebView (резерв)") {
             runtime.open("https://www.tiktok.com/login")
@@ -87,7 +87,7 @@ class MainActivity : Activity() {
         }
         panel.addView(webLoginButton)
         val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-        row.addView(button("▶ Авто") { startServiceAction(WorkerService.ACTION_AUTO) }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        row.addView(button("▶ Авто (реальная работа)") { startServiceAction(WorkerService.ACTION_AUTO) }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         row.addView(button("⛔ Стоп") { startServiceAction(WorkerService.ACTION_STOP) }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         panel.addView(row)
         controls.addView(panel)
@@ -225,7 +225,7 @@ class MainActivity : Activity() {
                 if (clicked) Thread.sleep(1000)
                 val inputFound = clicked && service.snapshot().nodes.any(::isTikTokCommentInput)
                 val message = when {
-                    inputFound -> "Управление подтверждено: панель комментариев открыта, поле найдено. Публикация не выполнялась."
+                    inputFound -> "Базовый тест пройден: панель открыта, поле найдено. Ввод, фото и публикация здесь не проверяются. Для реальной работы: новая картинка + настоящая ссылка + ▶ Авто."
                     clicked -> "Нажатие комментариев выполнено, но поле ввода не распознано. Нужны версия TikTok и язык интерфейса."
                     else -> "Accessibility видит $visible элементов, но кнопка комментариев не распознана. Откройте видео и повторите тест; публикации не было."
                 }

@@ -251,6 +251,7 @@ class WorkerService : Service() {
             }
             val downloaded = telegram.download(fileId)
             val result = images.importImage(ByteArrayInputStream(downloaded.bytes), downloaded.extension.ifBlank { extension })
+            if (result.first == "added") engine.notifyWorkAvailable()
             val text = when (result.first) {
                 "added" -> "Картинка добавлена в одноразовую библиотеку."
                 "duplicate" -> "Такая картинка уже есть; повторно она не будет использована."
