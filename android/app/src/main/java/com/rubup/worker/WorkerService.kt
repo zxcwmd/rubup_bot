@@ -47,6 +47,7 @@ class WorkerService : Service() {
         engine.start()
         when (intent?.action) {
             ACTION_AUTO -> engine.startAuto()
+            ACTION_WORK_AVAILABLE -> engine.notifyWorkAvailable()
             ACTION_STOP -> Thread { engine.forceStop() }.start()
         }
         if (polling?.isAlive != true) {
@@ -335,6 +336,7 @@ class WorkerService : Service() {
     companion object {
         const val ACTION_START = "com.rubup.worker.action.START"
         const val ACTION_AUTO = "com.rubup.worker.action.AUTO"
+        const val ACTION_WORK_AVAILABLE = "com.rubup.worker.action.WORK_AVAILABLE"
         const val ACTION_STOP = "com.rubup.worker.action.STOP"
         private const val CHANNEL_ID = "rubup-worker"
         private const val NOTIFICATION_ID = 41

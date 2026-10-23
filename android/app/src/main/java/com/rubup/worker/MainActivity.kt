@@ -76,6 +76,7 @@ class MainActivity : Activity() {
         panel.addView(modeInput)
         panel.addView(button("Сохранить и запустить службу") { saveAndStart() })
         panel.addView(button("Проверить Telegram: токен и сеть") { checkTelegram() })
+        panel.addView(button("Загрузить картинки для комментариев") { openLibraryImagePicker() })
         nativePanel = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         nativePanel.addView(button("1. Включить Accessibility для RubUP") { openAccessibilitySettings() })
         nativePanel.addView(button("2. Открыть установленный TikTok") { openInstalledTikTok() })
@@ -221,12 +222,17 @@ class MainActivity : Activity() {
                 if (visible <= 1) {
                     throw BotFailure("TikTok открыт, но Accessibility видит только $visible элемент(ов), а не интерфейс")
                 }
-                val clicked = service.clickFirst(::isTikTokCommentEntry)
+                val alreadyOpen = service.snapshot().nodes.any(::isTikTokCommentInput)
+                val clicked = !alreadyOpen && service.clickFirst(::isTikTokCommentEntry)
                 if (clicked) Thread.sleep(1000)
-                val inputFound = clicked && service.snapshot().nodes.any(::isTikTokCommentInput)
+                val comments = service.snapshot()
+                val inputFound = comments.nodes.any(::isTikTokCommentInput)
+                val photoFound = inputFound && findTikTokPhotoEntry(comments) != null
                 val message = when {
-                    inputFound -> "Базовый тест пройден: панель открыта, поле найдено. Ввод, фото и публикация здесь не проверяются. Для реальной работы: новая картинка + настоящая ссылка + ▶ Авто."
+                    inputFound && photoFound -> "Панель, поле и кнопка фото распознаны. Тест ничего не прикрепляет и не публикует."
+                    inputFound -> "Поле комментария найдено, но кнопка фото не распознана. Публикации и прикрепления не было."
                     clicked -> "Нажатие комментариев выполнено, но поле ввода не распознано. Нужны версия TikTok и язык интерфейса."
+                    alreadyOpen -> "Панель была открыта, но поле комментария больше не распознаётся. Ничего не публиковалось."
                     else -> "Accessibility видит $visible элементов, но кнопка комментариев не распознана. Откройте видео и повторите тест; публикации не было."
                 }
                 runOnUiThread {
@@ -265,6 +271,71 @@ class MainActivity : Activity() {
         super.onPause()
     }
 
+    private fun openLibraryImagePicker() {
+        val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+            type = "image/*"
+            addCategory(Intent.CATEGORY_OPENABLE)
+            putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true)
+        }
+        try {
+            startActivityForResult(intent, LIBRARY_IMAGE_REQUEST)
+        } catch (error: Exception) {
+            Toast.makeText(this, "Не удалось открыть выбор изображений: ${error.message}", Toast.LENGTH_LONG).show()
+        }
+    }
+
+    private fun importLibraryImages(uris: List<Uri>) {
+        settings.tiktokDiagnostic = "Импортирую изображений: ${uris.size}…"
+        updateDiagnostic()
+        Thread {
+            var added = 0
+            var duplicates = 0
+            var failed = 0
+            var lastError = ""
+            val importDb = AppDatabase(applicationContext)
+            try {
+                val library = ImageLibrary(applicationContext, importDb)
+                for (uri in uris) {
+                    try {
+                        val mime = contentResolver.getType(uri).orEmpty().lowercase()
+                        val extension = when {
+                            mime.contains("png") -> "png"
+                            mime.contains("webp") -> "webp"
+                            else -> "jpg"
+                        }
+                        val input = contentResolver.openInputStream(uri)
+                        if (input == null) {
+                            failed++
+                            continue
+                        }
+                        val result = input.use { library.importImage(it, extension) }
+                        when (result.first) {
+                            "added" -> added++
+                            "duplicate" -> duplicates++
+                            else -> failed++
+                        }
+                    } catch (error: Exception) {
+                        failed++
+                        lastError = error.message ?: error.javaClass.simpleName
+                    }
+                }
+            } finally {
+                importDb.close()
+            }
+            val summary = "Картинки: добавлено $added, повторы $duplicates, ошибки $failed." +
+                if (lastError.isNotBlank()) " Последняя ошибка: ${lastError.take(180)}" else ""
+            runOnUiThread {
+                settings.tiktokDiagnostic = summary
+                updateDiagnostic()
+                status.text = summary
+                Toast.makeText(this, summary, Toast.LENGTH_LONG).show()
+                if (added > 0 && settings.isConfigured && settings.autoEnabled) {
+                    startServiceAction(WorkerService.ACTION_WORK_AVAILABLE)
+                }
+            }
+        }.start()
+    }
+
     private fun openImagePicker() {
         val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
             type = "image/*"
@@ -275,13 +346,30 @@ class MainActivity : Activity() {
 
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
-        if (requestCode == FILE_REQUEST) {
-            val uri = if (resultCode == RESULT_OK) data?.data else null
-            runtime.deliverManualFiles(uri?.let { arrayOf(it) })
+        when (requestCode) {
+            FILE_REQUEST -> {
+                val uri = if (resultCode == RESULT_OK) data?.data else null
+                runtime.deliverManualFiles(uri?.let { arrayOf(it) })
+            }
+            LIBRARY_IMAGE_REQUEST -> {
+                if (resultCode != RESULT_OK) return
+                val selected = mutableListOf<Uri>()
+                data?.clipData?.let { clip ->
+                    for (index in 0 until clip.itemCount) selected += clip.getItemAt(index).uri
+                }
+                if (selected.isEmpty()) data?.data?.let(selected::add)
+                val uris = selected.distinct()
+                if (uris.isEmpty()) {
+                    Toast.makeText(this, "Изображения не выбраны", Toast.LENGTH_SHORT).show()
+                } else {
+                    importLibraryImages(uris)
+                }
+            }
         }
     }
 
     companion object {
         private const val FILE_REQUEST = 73
+        private const val LIBRARY_IMAGE_REQUEST = 74
     }
 }

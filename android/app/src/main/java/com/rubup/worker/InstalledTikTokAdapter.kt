@@ -10,6 +10,7 @@ import java.net.HttpURLConnection
 import java.net.URL
 import java.nio.charset.StandardCharsets
 import java.util.Locale
+import kotlin.math.abs
 
 /** Launches only the TikTok package already installed by the user. */
 object TikTokAppLauncher {
@@ -63,6 +64,45 @@ fun isTikTokCommentEntry(node: UiNode): Boolean {
 fun isTikTokCommentInput(node: UiNode): Boolean = node.visible && node.editable &&
     (node.label().contains("comment", true) || node.label().contains("коммент", true) ||
         node.resourceId.contains("reply", true))
+
+fun isTikTokPhotoEntry(node: UiNode): Boolean {
+    if (!node.visible || node.editable) return false
+    val label = node.label().lowercase(Locale.ROOT)
+    val id = node.resourceId.lowercase(Locale.ROOT)
+    if (listOf("remove", "delete", "удал", "убрать", "avatar", "profile", "аватар").any(label::contains)) {
+        return false
+    }
+    val explicitAttachment = listOf(
+        "photo", "picture", "gallery", "attach", "upload", "фото", "галере", "прикреп", "вложен",
+    ).any(label::contains)
+    if (!explicitAttachment && listOf("post", "send", "publish", "опублик", "отправ").any(label::contains)) {
+        return false
+    }
+    val markers = listOf(
+        "photo", "picture", "image", "gallery", "attach", "upload", "media", "camera",
+        "фото", "галере", "изображ", "прикреп", "вложен", "медиа", "камер",
+    )
+    if (markers.none(label::contains)) return false
+    return node.clickable || node.className.contains("button", true) ||
+        node.className.contains("image", true) || markers.any(id::contains)
+}
+
+fun findTikTokPhotoEntry(snapshot: UiSnapshot): UiNode? {
+    val input = snapshot.nodes.firstOrNull(::isTikTokCommentInput) ?: return null
+    val verticalTolerance = maxOf(180, input.bounds.height() * 2)
+    return snapshot.nodes.filter(::isTikTokPhotoEntry).filter { node ->
+        node.bounds.bottom >= input.bounds.top - verticalTolerance &&
+            node.bounds.top <= input.bounds.bottom + verticalTolerance
+    }.minByOrNull { node ->
+        val id = node.resourceId.lowercase(Locale.ROOT)
+        val label = node.textOrDescription().lowercase(Locale.ROOT)
+        var score = abs(node.bounds.centerY() - input.bounds.centerY())
+        if (id.contains("comment") || id.contains("reply")) score -= 10_000
+        if (listOf("add", "attach", "upload", "добав", "прикреп", "загруз").any(label::contains)) score -= 5000
+        if (node.clickable) score -= 500
+        score
+    }
+}
 
 private data class HttpPage(val finalUrl: String, val body: String)
 
@@ -383,12 +423,11 @@ class InstalledTikTokAdapter(
     private fun attachPhoto(image: ImageAsset) {
         val service = accessibility()
         val displayName = images.publishForNative(image)
-        val clicked = service.clickFirst { node ->
-            val label = node.label().lowercase(Locale.ROOT)
-            !node.editable && (label.contains("photo") || label.contains("picture") || label.contains("gallery") ||
-                label.contains("фото") || label.contains("галере") || label.contains("изображ"))
+        val photoButton = findTikTokPhotoEntry(service.snapshot())
+            ?: throw ManualActionRequired("В TikTok не найдена кнопка добавления фото рядом с полем комментария")
+        if (!service.clickPath(photoButton.path)) {
+            throw ManualActionRequired("Кнопка добавления фото распознана, но Android не подтвердил нажатие")
         }
-        if (!clicked) throw ManualActionRequired("В TikTok не найдена кнопка добавления фото")
         Thread.sleep(1300)
         val selected = selectGalleryImage(displayName)
         if (!selected) throw ManualActionRequired("Не удалось выбрать именно $displayName; случайное фото не используется")
