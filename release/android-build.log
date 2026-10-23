@@ -17,18 +17,17 @@ Daemon will be stopped at the end of the build
 > Task :app:checkDebugAarMetadata
 > Task :app:generateDebugResValues FROM-CACHE
 > Task :app:mapDebugSourceSetPaths
-> Task :app:generateDebugResources FROM-CACHE
-> Task :app:mergeDebugResources FROM-CACHE
-> Task :app:packageDebugResources FROM-CACHE
-> Task :app:parseDebugLocalResources FROM-CACHE
+> Task :app:generateDebugResources
+> Task :app:packageDebugResources
+> Task :app:mergeDebugResources
 > Task :app:createDebugCompatibleScreenManifests
 > Task :app:extractDeepLinksDebug FROM-CACHE
-> Task :app:processDebugMainManifest FROM-CACHE
-> Task :app:processDebugManifest FROM-CACHE
-> Task :app:processDebugManifestForPackage FROM-CACHE
-> Task :app:processDebugResources FROM-CACHE
+> Task :app:parseDebugLocalResources
+> Task :app:processDebugMainManifest
+> Task :app:processDebugManifest
 > Task :app:javaPreCompileDebug FROM-CACHE
 > Task :app:mergeDebugShaders
+> Task :app:processDebugManifestForPackage
 > Task :app:compileDebugShaders NO-SOURCE
 > Task :app:generateDebugAssets UP-TO-DATE
 > Task :app:mergeDebugAssets
@@ -40,10 +39,20 @@ Daemon will be stopped at the end of the build
 > Task :app:mergeLibDexDebug FROM-CACHE
 > Task :app:mergeDebugNativeLibs NO-SOURCE
 > Task :app:stripDebugDebugSymbols NO-SOURCE
+> Task :app:processDebugResources
 > Task :app:validateSigningDebug
 > Task :app:writeDebugAppMetadata
 > Task :app:writeDebugSigningConfigVersions
+
 > Task :app:compileDebugKotlin
+w: file:///home/runner/work/rubup_bot/rubup_bot/android/app/src/main/java/com/rubup/worker/TikTokAccessibilityService.kt:86:78 'fun recycle(): Unit' is deprecated. Deprecated in Java.
+w: file:///home/runner/work/rubup_bot/rubup_bot/android/app/src/main/java/com/rubup/worker/TikTokAccessibilityService.kt:104:18 'fun recycle(): Unit' is deprecated. Deprecated in Java.
+w: file:///home/runner/work/rubup_bot/rubup_bot/android/app/src/main/java/com/rubup/worker/TikTokAccessibilityService.kt:117:27 'fun recycle(): Unit' is deprecated. Deprecated in Java.
+w: file:///home/runner/work/rubup_bot/rubup_bot/android/app/src/main/java/com/rubup/worker/TikTokAccessibilityService.kt:159:52 'fun recycle(): Unit' is deprecated. Deprecated in Java.
+w: file:///home/runner/work/rubup_bot/rubup_bot/android/app/src/main/java/com/rubup/worker/TikTokAccessibilityService.kt:160:18 'fun recycle(): Unit' is deprecated. Deprecated in Java.
+w: file:///home/runner/work/rubup_bot/rubup_bot/android/app/src/main/java/com/rubup/worker/TikTokAccessibilityService.kt:175:52 'fun recycle(): Unit' is deprecated. Deprecated in Java.
+w: file:///home/runner/work/rubup_bot/rubup_bot/android/app/src/main/java/com/rubup/worker/TikTokAccessibilityService.kt:176:18 'fun recycle(): Unit' is deprecated. Deprecated in Java.
+
 > Task :app:compileDebugJavaWithJavac NO-SOURCE
 > Task :app:dexBuilderDebug
 > Task :app:mergeDebugGlobalSynthetics FROM-CACHE
@@ -54,5 +63,5 @@ Daemon will be stopped at the end of the build
 > Task :app:createDebugApkListingFileRedirect
 > Task :app:assembleDebug
 
-BUILD SUCCESSFUL in 18s
-33 actionable tasks: 17 executed, 16 from cache
+BUILD SUCCESSFUL in 33s
+33 actionable tasks: 25 executed, 8 from cache
