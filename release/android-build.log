@@ -31,20 +31,22 @@ Daemon will be stopped at the end of the build
 > Task :app:generateDebugAssets UP-TO-DATE
 > Task :app:mergeDebugAssets
 > Task :app:compressDebugAssets FROM-CACHE
+> Task :app:processDebugManifestForPackage
 > Task :app:desugarDebugFileDependencies FROM-CACHE
 > Task :app:mergeDebugJniLibFolders
 > Task :app:mergeDebugNativeLibs NO-SOURCE
-> Task :app:stripDebugDebugSymbols NO-SOURCE
 > Task :app:checkDebugDuplicateClasses
-> Task :app:validateSigningDebug
+> Task :app:stripDebugDebugSymbols NO-SOURCE
 > Task :app:mergeExtDexDebug FROM-CACHE
 > Task :app:mergeLibDexDebug FROM-CACHE
+> Task :app:processDebugResources
+> Task :app:validateSigningDebug
 > Task :app:writeDebugAppMetadata
 > Task :app:writeDebugSigningConfigVersions
-> Task :app:processDebugManifestForPackage
-> Task :app:processDebugResources
 
 > Task :app:compileDebugKotlin
+e: The daemon has terminated unexpectedly on startup attempt #1 with error code: 0. The daemon process output:
+    1. Kotlin compile daemon is ready
 w: file:///home/runner/work/rubup_bot/rubup_bot/android/app/src/main/java/com/rubup/worker/TikTokAccessibilityService.kt:86:78 'fun recycle(): Unit' is deprecated. Deprecated in Java.
 w: file:///home/runner/work/rubup_bot/rubup_bot/android/app/src/main/java/com/rubup/worker/TikTokAccessibilityService.kt:104:18 'fun recycle(): Unit' is deprecated. Deprecated in Java.
 w: file:///home/runner/work/rubup_bot/rubup_bot/android/app/src/main/java/com/rubup/worker/TikTokAccessibilityService.kt:117:27 'fun recycle(): Unit' is deprecated. Deprecated in Java.
@@ -63,5 +65,5 @@ w: file:///home/runner/work/rubup_bot/rubup_bot/android/app/src/main/java/com/ru
 > Task :app:createDebugApkListingFileRedirect
 > Task :app:assembleDebug
 
-BUILD SUCCESSFUL in 20s
+BUILD SUCCESSFUL in 27s
 33 actionable tasks: 25 executed, 8 from cache
