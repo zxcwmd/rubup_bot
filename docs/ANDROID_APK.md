@@ -140,6 +140,8 @@ chmod +x gradlew
 android/app/build/outputs/apk/debug/app-debug.apk
 ```
 
+SHA-256 опубликованного в репозитории APK записан рядом в `release/RubUP-Worker-debug.apk.sha256`; после скачивания можно сверить его командой `sha256sum RubUP-Worker-debug.apk`.
+
 На Windows используйте `gradlew.bat assembleDebug` из каталога `android` при установленных JDK 17 и Android SDK.
 
 GitHub Actions workflow `.github/workflows/android-apk.yml` повторяет эту сборку на Ubuntu с JDK 17. После сборки он загружает APK как artifact `rubup-worker-debug-apk` и публикует копию `release/RubUP-Worker-debug.apk` и `release/android-build.log` в текущую ветку. Для сборки не нужны Telegram-токен, TikTok-пароль или другие секреты.
