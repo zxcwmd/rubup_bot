@@ -143,9 +143,11 @@ class InstalledTikTokAdapter(
             stopCheck()
             attachPhoto(image)
         }
-        val input = service.snapshot().nodes.filter { it.visible && it.editable }
-            .sortedByDescending { it.label().contains("comment", true) || it.label().contains("коммент", true) }
-            .firstOrNull() ?: throw ManualActionRequired("Поле комментария в TikTok не найдено")
+        val input = service.snapshot().nodes.firstOrNull { node ->
+            node.visible && node.editable &&
+                (node.label().contains("comment", true) || node.label().contains("коммент", true) ||
+                    node.resourceId.contains("reply", true))
+        } ?: throw ManualActionRequired("Поле комментария в TikTok не найдено или не распознано")
         if (!service.setTextPath(input.path, action.text)) {
             throw ManualActionRequired("Android не разрешил ввести текст в поле комментария")
         }
@@ -233,7 +235,10 @@ class InstalledTikTokAdapter(
         val service = accessibility()
         checkChallenge()
         val snapshot = service.snapshot()
-        if (snapshot.nodes.any { it.visible && it.editable }) return
+        if (snapshot.nodes.any { node ->
+                node.visible && node.editable &&
+                    (node.label().contains("comment", true) || node.label().contains("коммент", true))
+            }) return
         val clicked = service.clickFirst { node ->
             val label = node.textOrDescription().trim().lowercase(Locale.ROOT)
             val id = node.resourceId.lowercase(Locale.ROOT)
@@ -321,13 +326,13 @@ class InstalledTikTokAdapter(
                 val nodeText = normalizeText(node.text)
                 if (nodeText != expected && !nodeText.contains(expected)) return@firstNotNullOfOrNull null
                 val container = nearestCommentContainer(snapshot, node) ?: return@firstNotNullOfOrNull null
-                val actual = readCommentsFromContainer(container, snapshot) ?: return@firstNotNullOfOrNull null
+                val actual = readCommentsFromContainer(container) ?: return@firstNotNullOfOrNull null
                 val authorMatches = expectedAuthor.isBlank() || actual.first.equals(expectedAuthor, true)
                 if (authorMatches) container else null
             }
     }
 
-    private fun readCommentsFromContainer(container: UiNode, snapshot: UiSnapshot): Pair<String, String>? {
+    private fun readCommentsFromContainer(container: UiNode): Pair<String, String>? {
         val body = commentBody(container) ?: return null
         val author = authorFrom(container, body) ?: return null
         return author.lowercase().removePrefix("@") to body.text
@@ -475,7 +480,9 @@ class InstalledTikTokAdapter(
         if (label.contains("avatar") || label.contains("profile") || label.contains("аватар")) return false
         val visual = node.className.contains("image", true) || node.resourceId.contains("image", true) ||
             node.resourceId.contains("photo", true)
-        return visual && (label.contains("photo") || label.contains("picture") || label.contains("media") ||
-            label.contains("image") || label.contains("attachment") || label.contains("фото") || label.contains("изображ"))
+        val explicitCommentImage = node.resourceId.contains("comment", true) &&
+            (node.resourceId.contains("image", true) || node.resourceId.contains("photo", true))
+        return visual && (explicitCommentImage || label.contains("photo") || label.contains("picture") ||
+            label.contains("media") || label.contains("attachment") || label.contains("фото") || label.contains("изображ"))
     }
 }

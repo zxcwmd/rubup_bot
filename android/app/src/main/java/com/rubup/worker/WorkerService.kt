@@ -165,7 +165,12 @@ class WorkerService : Service() {
                 "/stop", "⛔ Стоп" -> {
                     telegram.sendMessage(chat, "⛔ Останавливаю: новые действия запрещены, жду текущий вызов…")
                     engine.forceStop()
-                    telegram.sendMessage(chat, "⛔ Остановлено. WebView выгружен. Для запуска нажмите ▶️ Авто.")
+                    val stoppedDetail = if (settings.useInstalledTikTok) {
+                        "Новые обращения к установленному TikTok остановлены; его сессия сохранена."
+                    } else {
+                        "WebView выгружен."
+                    }
+                    telegram.sendMessage(chat, "⛔ Остановлено. $stoppedDetail Для запуска нажмите ▶️ Авто.")
                 }
                 "/status", "📊 Статус" -> telegram.sendMessage(chat, engine.statusText())
                 "/discover", "🔎 Найти видео" -> {
@@ -313,7 +318,7 @@ class WorkerService : Service() {
         private const val NOTIFICATION_ID = 41
         private const val HELP = """RubUP Worker для Android
 
-▶️ Авто — запуск; ⏸ Пауза — пауза; ⛔ Стоп — запретить действия и выгрузить WebView.
+▶️ Авто — запуск; ⏸ Пауза — пауза; ⛔ Стоп — запретить новые действия и безопасно завершить текущий вызов.
 Основной комментарий: фото → лайк своего комментария → data/links.txt.
 Отправляйте изображения фотографией или документом.
 

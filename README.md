@@ -24,7 +24,7 @@ Telegram-бот для максимально автоматизированно
 
 Архитектура и состояния описаны в [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), адаптация интерфейса — в [docs/TIKTOK.md](docs/TIKTOK.md).
 
-**Нативный APK-исполнитель для Android 10+:** [docs/ANDROID_APK.md](docs/ANDROID_APK.md). Он сам работает на втором телефоне через WebView и управляется с основного телефона через Telegram, без Termux и внешнего сервера. Готовый debug-файл: [release/RubUP-Worker-debug.apk](release/RubUP-Worker-debug.apk). Прежняя схема Termux/proot сохранена как альтернатива в [docs/ANDROID.md](docs/ANDROID.md).
+**Нативный APK-исполнитель для Android 10+:** [docs/ANDROID_APK.md](docs/ANDROID_APK.md). По умолчанию он сам работает на втором телефоне в уже установленном TikTok через Accessibility и управляется с основного телефона через Telegram, без Termux и внешнего сервера. WebView оставлен резервным режимом. Готовый debug-файл: [release/RubUP-Worker-debug.apk](release/RubUP-Worker-debug.apk). Прежняя схема Termux/proot сохранена как альтернатива в [docs/ANDROID.md](docs/ANDROID.md).
 
 ---
 
@@ -129,7 +129,7 @@ nano .env                 # заполните токен, admin ID и TikTok us
 
 ## 2A. Второй Android-телефон
 
-**Рекомендуемый новый вариант:** нативный APK сам выполняет работу на втором телефоне с Android 10+, а основной телефон используется только для Telegram-управления. Установка, WebView-вход, команды, ограничения и повторяемая сборка: **[docs/ANDROID_APK.md](docs/ANDROID_APK.md)**.
+**Рекомендуемый новый вариант:** нативный APK сам выполняет работу на втором телефоне с Android 10+ в уже установленном TikTok через Accessibility, а основной телефон используется только для Telegram-управления. Установка, включение разрешения, команды, сохранение ссылок, ограничения и повторяемая сборка: **[docs/ANDROID_APK.md](docs/ANDROID_APK.md)**. WebView оставлен как резерв.
 
 Прежняя схема **Termux → Ubuntu 24.04 proot → Python/Playwright Chromium** сохранена как альтернатива: [docs/ANDROID.md](docs/ANDROID.md). Для неё нужны VNC-вход и отдельная среда Chromium. Независимо от выбранной схемы не запускайте одновременно двух исполнителей с одним Telegram-токеном и сначала выполните живой тест под наблюдением.
 
