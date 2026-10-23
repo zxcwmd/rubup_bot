@@ -22,19 +22,19 @@ Daemon will be stopped at the end of the build
 > Task :app:mergeDebugResources
 > Task :app:createDebugCompatibleScreenManifests
 > Task :app:extractDeepLinksDebug FROM-CACHE
-> Task :app:parseDebugLocalResources
 > Task :app:processDebugMainManifest
+> Task :app:parseDebugLocalResources
 > Task :app:processDebugManifest
 > Task :app:javaPreCompileDebug FROM-CACHE
 > Task :app:mergeDebugShaders
 > Task :app:compileDebugShaders NO-SOURCE
 > Task :app:generateDebugAssets UP-TO-DATE
+> Task :app:processDebugManifestForPackage
 > Task :app:mergeDebugAssets
 > Task :app:compressDebugAssets FROM-CACHE
 > Task :app:desugarDebugFileDependencies FROM-CACHE
-> Task :app:mergeDebugJniLibFolders
-> Task :app:processDebugManifestForPackage
 > Task :app:checkDebugDuplicateClasses
+> Task :app:mergeDebugJniLibFolders
 > Task :app:mergeExtDexDebug FROM-CACHE
 > Task :app:mergeLibDexDebug FROM-CACHE
 > Task :app:mergeDebugNativeLibs NO-SOURCE
@@ -63,5 +63,5 @@ w: file:///home/runner/work/rubup_bot/rubup_bot/android/app/src/main/java/com/ru
 > Task :app:createDebugApkListingFileRedirect
 > Task :app:assembleDebug
 
-BUILD SUCCESSFUL in 39s
+BUILD SUCCESSFUL in 22s
 33 actionable tasks: 25 executed, 8 from cache
