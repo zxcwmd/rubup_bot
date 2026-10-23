@@ -63,5 +63,5 @@ w: file:///home/runner/work/rubup_bot/rubup_bot/android/app/src/main/java/com/ru
 > Task :app:createDebugApkListingFileRedirect
 > Task :app:assembleDebug
 
-BUILD SUCCESSFUL in 24s
+BUILD SUCCESSFUL in 39s
 33 actionable tasks: 25 executed, 8 from cache
