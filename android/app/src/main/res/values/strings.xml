@@ -3,4 +3,5 @@
     <string name="app_name">RubUP Worker</string>
     <string name="notification_channel">Работа RubUP</string>
     <string name="notification_text">Исполнитель запущен. Управление — через Telegram.</string>
+    <string name="accessibility_description">Позволяет RubUP Worker нажимать элементы и вводить текст в уже установленном TikTok. Другие приложения не используются.</string>
 </resources>

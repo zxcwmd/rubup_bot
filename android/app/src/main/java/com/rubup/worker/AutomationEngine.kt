@@ -16,7 +16,12 @@ class AutomationEngine(
     private val runtime: WebViewRuntime,
     private val images: ImageLibrary,
 ) {
-    private val adapter = TikTokAdapter(runtime, settings)
+    private val installedMode = settings.useInstalledTikTok
+    private val adapter: TikTokOperations = if (installedMode) {
+        InstalledTikTokAdapter(context, settings, images)
+    } else {
+        TikTokAdapter(runtime, settings)
+    }
     private val textEngine = TextEngine(context)
     private val links = LinkStore(File(context.filesDir, "links.txt"))
     private val browserLock = ReentrantLock()
@@ -74,7 +79,7 @@ class AutomationEngine(
         wake()
         manualExecutor.shutdownNow()
         scheduler?.interrupt()
-        runtime.close()
+        if (!installedMode) runtime.close()
     }
 
     fun startAuto() {
@@ -93,7 +98,7 @@ class AutomationEngine(
         settings.autoEnabled = false
         wake()
         browserLock.lock()
-        try { runtime.close() } finally { browserLock.unlock() }
+        try { if (!installedMode) runtime.close() } finally { browserLock.unlock() }
     }
 
     private fun checkNotStopped() {
@@ -404,7 +409,8 @@ class AutomationEngine(
 
     fun statusText(): String {
         val stats = db.stats()
-        return "Автоматика: ${if (settings.autoEnabled) "▶️ включена" else "⏸ на паузе"}\n" +
+        return "Режим: ${if (installedMode) "установленное приложение TikTok" else "WebView"}\n" +
+            "Автоматика: ${if (settings.autoEnabled) "▶️ включена" else "⏸ на паузе"}\n" +
             "Видео: ${stats["videos"]} (в очереди ${stats["queued"]})\n" +
             "Опубликовано: ${stats["published"]}; ручная проверка: ${stats["manual"]}; ошибки: ${stats["failed"]}\n" +
             "Лайки: ожидают ${stats["pending_likes"]}, ручная проверка ${stats["likes_manual"]}; ссылок: ${stats["links"]}\n" +

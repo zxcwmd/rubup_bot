@@ -19,7 +19,7 @@ fun canonicalVideoUrl(value: String): String? {
 fun videoIdFromUrl(value: String): String? = canonicalVideoUrl(value)
     ?.let { Regex("/video/(\\d+)").find(it)?.groupValues?.get(1) }
 
-class TikTokAdapter(private val runtime: WebViewRuntime, private val settings: SettingsStore) {
+class TikTokAdapter(private val runtime: WebViewRuntime, private val settings: SettingsStore) : TikTokOperations {
     private val itemSelectors = listOf(
         "[data-e2e='comment-item']", "[data-e2e*='comment-item' i]",
         "div[class*='CommentItem']", "div[class*='comment-item']",
@@ -100,14 +100,14 @@ class TikTokAdapter(private val runtime: WebViewRuntime, private val settings: S
         if (challenged) throw ChallengeRequired("TikTok показал капчу. Откройте приложение и пройдите её в WebView.")
     }
 
-    fun ensureAuthenticated() {
+    override fun ensureAuthenticated() {
         if (!currentUrl().contains("tiktok.com")) runtime.navigate("https://www.tiktok.com/")
         checkChallenge()
         val loggedIn = bool("!!document.querySelector(\"[data-e2e='profile-icon'],a[href^='/@'][data-e2e*='profile' i]\")")
         if (!loggedIn) throw SessionRequired("Нет сохранённого входа в TikTok. Откройте RubUP Worker и войдите в WebView.")
     }
 
-    fun discover(tag: String, limit: Int): List<String> {
+    override fun discover(tag: String, limit: Int): List<String> {
         val clean = tag.removePrefix("#")
         runtime.navigate("https://www.tiktok.com/tag/${Uri.encode(clean)}")
         val found = linkedMapOf<String, String>()
@@ -132,7 +132,7 @@ class TikTokAdapter(private val runtime: WebViewRuntime, private val settings: S
         return found.values.take(limit)
     }
 
-    fun getVideo(url: String, sourceTag: String = ""): Video {
+    override fun getVideo(url: String, sourceTag: String): Video {
         var canonical = canonicalVideoUrl(url)
         if (canonical == null) {
             val host = Uri.parse(url).host.orEmpty()
@@ -172,7 +172,7 @@ class TikTokAdapter(private val runtime: WebViewRuntime, private val settings: S
         return Video(videoId, canonical, author, description, published, tags)
     }
 
-    fun getComments(videoUrl: String, limit: Int = 100): List<TikTokComment> {
+    override fun getComments(videoUrl: String, limit: Int): List<TikTokComment> {
         val canonical = canonicalVideoUrl(videoUrl) ?: throw BotFailure("Нужна каноническая ссылка на видео")
         if (canonicalVideoUrl(currentUrl()) != canonical) runtime.navigate(canonical)
         repeat(2) {
@@ -203,7 +203,7 @@ class TikTokAdapter(private val runtime: WebViewRuntime, private val settings: S
         }
     }
 
-    fun postComment(action: ActionItem, image: ImageAsset?, imageUri: android.net.Uri?, stopCheck: () -> Unit) {
+    override fun postComment(action: ActionItem, image: ImageAsset?, imageUri: android.net.Uri?, stopCheck: () -> Unit) {
         val canonical = canonicalVideoUrl(action.videoUrl) ?: throw BotFailure("Неканоническая ссылка")
         if (canonicalVideoUrl(currentUrl()) != canonical) runtime.navigate(canonical)
         checkChallenge()
@@ -272,7 +272,7 @@ class TikTokAdapter(private val runtime: WebViewRuntime, private val settings: S
         }
     }
 
-    fun likeOwnComment(action: ActionItem, stopCheck: () -> Unit): Boolean {
+    override fun likeOwnComment(action: ActionItem, stopCheck: () -> Unit): Boolean {
         if (settings.tiktokUsername.isBlank()) return false
         val canonical = canonicalVideoUrl(action.videoUrl) ?: return false
         val expected = normalizeText(action.text)

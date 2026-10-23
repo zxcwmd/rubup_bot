@@ -19,6 +19,10 @@ class SettingsStore(context: Context) {
         get() = prefs.getString("tiktok_username", "").orEmpty()
         set(value) = prefs.edit().putString("tiktok_username", value.trim().removePrefix("@").lowercase()).apply()
 
+    var useInstalledTikTok: Boolean
+        get() = prefs.getBoolean("use_installed_tiktok", true)
+        set(value) = prefs.edit().putBoolean("use_installed_tiktok", value).apply()
+
     var autoEnabled: Boolean
         get() = prefs.getBoolean("auto_enabled", false)
         set(value) = prefs.edit().putBoolean("auto_enabled", value).apply()

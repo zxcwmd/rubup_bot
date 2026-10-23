@@ -6,12 +6,12 @@ import android.graphics.Color
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.provider.Settings
 import android.text.InputType
-import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
-import android.webkit.WebView
 import android.widget.Button
+import android.widget.CheckBox
 import android.widget.EditText
 import android.widget.FrameLayout
 import android.widget.LinearLayout
@@ -27,6 +27,9 @@ class MainActivity : Activity() {
     private lateinit var tokenInput: EditText
     private lateinit var adminInput: EditText
     private lateinit var usernameInput: EditText
+    private lateinit var modeInput: CheckBox
+    private lateinit var nativePanel: LinearLayout
+    private lateinit var webLoginButton: Button
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -46,7 +49,6 @@ class MainActivity : Activity() {
             setPadding(24, 18, 24, 18)
         }
         status = TextView(this).apply {
-            text = "RubUP Worker — Android 10+\nЗаполните настройки, сохраните и войдите в TikTok."
             textSize = 15f
             setTextColor(Color.rgb(17, 24, 39))
             setPadding(0, 0, 0, 12)
@@ -56,11 +58,25 @@ class MainActivity : Activity() {
         adminInput = input("Ваш числовой Telegram ID", settings.adminIds.joinToString(","), InputType.TYPE_CLASS_NUMBER)
         usernameInput = input("Логин TikTok без @", settings.tiktokUsername, InputType.TYPE_CLASS_TEXT)
         panel.addView(tokenInput); panel.addView(adminInput); panel.addView(usernameInput)
+        modeInput = CheckBox(this).apply {
+            text = "Работать в установленном приложении TikTok"
+            isChecked = settings.useInstalledTikTok
+            setOnCheckedChangeListener { _, checked ->
+                settings.useInstalledTikTok = checked
+                updateMode()
+            }
+        }
+        panel.addView(modeInput)
         panel.addView(button("Сохранить и запустить службу") { saveAndStart() })
-        panel.addView(button("Войти в TikTok в WebView") {
+        nativePanel = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        nativePanel.addView(button("1. Включить Accessibility для RubUP") { openAccessibilitySettings() })
+        nativePanel.addView(button("2. Открыть установленный TikTok") { openInstalledTikTok() })
+        panel.addView(nativePanel)
+        webLoginButton = button("Войти в TikTok через WebView (резерв)") {
             runtime.open("https://www.tiktok.com/login")
-            status.text = "Войдите в один аккаунт TikTok в окне ниже. После входа управляйте ботом с основного телефона."
-        })
+            status.text = "Резервный WebView: войдите в один аккаунт TikTok. Для installed-режима включите переключатель выше."
+        }
+        panel.addView(webLoginButton)
         val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
         row.addView(button("▶ Авто") { startServiceAction(WorkerService.ACTION_AUTO) }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         row.addView(button("⛔ Стоп") { startServiceAction(WorkerService.ACTION_STOP) }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
@@ -70,6 +86,25 @@ class MainActivity : Activity() {
         webContainer = FrameLayout(this)
         root.addView(webContainer, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
         setContentView(root)
+        updateMode()
+    }
+
+    private fun updateMode() {
+        val installed = modeInput.isChecked
+        nativePanel.visibility = if (installed) View.VISIBLE else View.GONE
+        webLoginButton.visibility = if (installed) View.GONE else View.VISIBLE
+        webContainer.visibility = if (installed) View.GONE else View.VISIBLE
+        if (installed) {
+            runtime.detach(webContainer)
+            status.text = "RubUP Worker — установленное приложение TikTok\n" +
+                if (TikTokAccessibilityService.isReady()) {
+                    "Accessibility подключена. Войдите в TikTok, сохраните настройки и отправьте /start боту."
+                } else {
+                    "Сначала нажмите «Включить Accessibility», найдите RubUP Worker в системном списке и разрешите доступ."
+                }
+        } else {
+            status.text = "Резервный режим WebView. Для работы в установленном TikTok включите переключатель выше."
+        }
     }
 
     private fun input(hint: String, value: String, type: Int): EditText = EditText(this).apply {
@@ -88,9 +123,31 @@ class MainActivity : Activity() {
 
     private fun saveAndStart() {
         try {
+            settings.useInstalledTikTok = modeInput.isChecked
             settings.save(tokenInput.text.toString(), adminInput.text.toString(), usernameInput.text.toString())
             startServiceAction(WorkerService.ACTION_START)
-            status.text = "Настройки сохранены. Служба запущена. Теперь войдите в TikTok и отправьте /start своему боту с основного телефона."
+            status.text = if (modeInput.isChecked) {
+                "Настройки сохранены. Включите Accessibility, войдите в установленный TikTok и отправьте /start боту."
+            } else {
+                "Настройки сохранены. Войдите в TikTok в WebView и отправьте /start боту."
+            }
+        } catch (error: Exception) {
+            Toast.makeText(this, error.message, Toast.LENGTH_LONG).show()
+        }
+    }
+
+    private fun openAccessibilitySettings() {
+        try {
+            startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+            Toast.makeText(this, "В списке выберите RubUP Worker и включите доступ", Toast.LENGTH_LONG).show()
+        } catch (error: Exception) {
+            Toast.makeText(this, error.message, Toast.LENGTH_LONG).show()
+        }
+    }
+
+    private fun openInstalledTikTok() {
+        try {
+            TikTokAppLauncher.open(this)
         } catch (error: Exception) {
             Toast.makeText(this, error.message, Toast.LENGTH_LONG).show()
         }
@@ -107,7 +164,10 @@ class MainActivity : Activity() {
     override fun onResume() {
         super.onResume()
         runtime.manualFileChooser = { openImagePicker() }
-        runtime.attach(webContainer)
+        if (::modeInput.isInitialized) {
+            updateMode()
+            if (!modeInput.isChecked) runtime.attach(webContainer)
+        }
     }
 
     override fun onPause() {
