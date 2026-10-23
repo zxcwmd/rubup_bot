@@ -275,7 +275,11 @@ class WorkerService : Service() {
     private fun sendAction(action: ActionItem, event: String, detail: String) {
         val kind = if (action.actionType == ActionType.COMMENT) "Комментарий" else "Ответ"
         val (text, inline) = when (event) {
-            "published" -> "✅ $kind #${action.id} опубликован\n${action.videoUrl}\nДалее: лайк и сохранение ссылки." to null
+            "published" -> if (action.actionType == ActionType.COMMENT) {
+                "✅ Комментарий #${action.id} опубликован\n${action.videoUrl}\nДалее: лайк и сохранение ссылки." to null
+            } else {
+                "✅ Ответ #${action.id} опубликован\n${action.videoUrl}\nЛайк и запись в links.txt для ответа не выполняются." to null
+            }
             "completed" -> "✅ Комментарий #${action.id} завершён: фото и лайк подтверждены, ссылка сохранена\n${action.videoUrl}" to null
             "manual" -> "⚠️ $kind #${action.id}: нужна ручная проверка\n${action.videoUrl}\n$detail" to inlineManual(action.id)
             "like_manual", "like_failed" -> "⚠️ Комментарий #${action.id}: лайк/ссылка не завершены\n${action.videoUrl}\n$detail" to inlineLike(action.id)

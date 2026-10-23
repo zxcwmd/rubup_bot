@@ -22,7 +22,9 @@ Telegram-бот для максимально автоматизированно
 - История действий, ручное подтверждение спорных публикаций и отправка отчёта только из ссылок.
 - Один постоянный браузерный профиль и один TikTok-аккаунт. Мультиаккаунтность и обход капчи отсутствуют.
 
-Архитектура и состояния описаны в [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), адаптация интерфейса — в [docs/TIKTOK.md](docs/TIKTOK.md). Пошаговый запуск на втором Android-телефоне — в [docs/ANDROID.md](docs/ANDROID.md).
+Архитектура и состояния описаны в [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), адаптация интерфейса — в [docs/TIKTOK.md](docs/TIKTOK.md).
+
+**Нативный APK-исполнитель для Android 10+:** [docs/ANDROID_APK.md](docs/ANDROID_APK.md). Он сам работает на втором телефоне через WebView и управляется с основного телефона через Telegram, без Termux и внешнего сервера. Готовый debug-файл: [release/RubUP-Worker-debug.apk](release/RubUP-Worker-debug.apk). Прежняя схема Termux/proot сохранена как альтернатива в [docs/ANDROID.md](docs/ANDROID.md).
 
 ---
 
@@ -127,9 +129,9 @@ nano .env                 # заполните токен, admin ID и TikTok us
 
 ## 2A. Второй Android-телефон
 
-Поддерживается схема **Termux → Ubuntu 24.04 proot → Python/Playwright Chromium**, с управлением через обычный Telegram на основном телефоне. Android root и веб-панель не нужны. Для первого входа используется локальный VNC-экран, после него исполнитель работает headless.
+**Рекомендуемый новый вариант:** нативный APK сам выполняет работу на втором телефоне с Android 10+, а основной телефон используется только для Telegram-управления. Установка, WebView-вход, команды, ограничения и повторяемая сборка: **[docs/ANDROID_APK.md](docs/ANDROID_APK.md)**.
 
-Полная пошаговая инструкция, команды установки, wake lock, VNC и ограничения: **[docs/ANDROID.md](docs/ANDROID.md)**. Запуск на физическом Android/TikTok пока не проверялся — сначала выполните тест с минимальными лимитами. Не запускайте одновременно второго исполнителя на ПК с тем же Telegram-токеном.
+Прежняя схема **Termux → Ubuntu 24.04 proot → Python/Playwright Chromium** сохранена как альтернатива: [docs/ANDROID.md](docs/ANDROID.md). Для неё нужны VNC-вход и отдельная среда Chromium. Независимо от выбранной схемы не запускайте одновременно двух исполнителей с одним Telegram-токеном и сначала выполните живой тест под наблюдением.
 
 ## 3. Управление в Telegram
 

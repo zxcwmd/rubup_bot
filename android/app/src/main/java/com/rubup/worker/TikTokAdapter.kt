@@ -42,7 +42,7 @@ class TikTokAdapter(private val runtime: WebViewRuntime, private val settings: S
     )
     private val publishedImageSelectors = listOf(
         "[data-e2e*='comment-image' i] img", "[class*='CommentImage' i] img",
-        "[class*='ImageContainer' i] img", "picture img", "img[alt*='comment' i]",
+        "[class*='ImageContainer' i] img", "img[alt*='comment' i]",
     )
     private val submitSelectors = listOf(
         "[data-e2e='comment-post']", "button[data-e2e*='comment-post' i]",
@@ -54,7 +54,7 @@ class TikTokAdapter(private val runtime: WebViewRuntime, private val settings: S
         "[role='button'][aria-label*='like' i]", "[data-e2e='comment-like-icon']",
     )
     private val likedSelectors = listOf(
-        "[data-e2e='comment-liked-icon']", "[data-e2e*='comment-unlike' i]", "[aria-pressed='true']",
+        "[data-e2e='comment-liked-icon']", "[data-e2e*='comment-unlike' i]",
         "[aria-label*='unlike' i]", "[aria-label*='Не нравится' i]", "[class*='like' i][class*='liked' i]",
     )
 
@@ -247,18 +247,28 @@ class TikTokAdapter(private val runtime: WebViewRuntime, private val settings: S
         } catch (error: Exception) {
             throw ManualActionRequired("Нажатие публикации не подтверждено: ${error.message}", true)
         }
-        Thread.sleep(2800)
-        val expected = normalizeText(action.text)
-        val own = settings.tiktokUsername
-        val verified = getComments(canonical, 120).any {
-            normalizeText(it.text) == expected && it.author.lowercase().removePrefix("@") == own &&
-                (action.actionType == ActionType.REPLY || it.hasImage)
-        }
-        if (!verified) {
-            throw ManualActionRequired(
-                "Нажатие выполнено, но комментарий с обязательным фото не подтверждён. Проверьте вручную перед повтором.",
-                true,
-            )
+        // After the click every uncertainty means manual review, never an automatic retry.
+        try {
+            Thread.sleep(2800)
+            checkChallenge()
+            val expected = normalizeText(action.text)
+            val own = settings.tiktokUsername
+            val verified = getComments(canonical, 120).any {
+                normalizeText(it.text) == expected && it.author.lowercase().removePrefix("@") == own &&
+                    (action.actionType == ActionType.REPLY || it.hasImage)
+            }
+            if (!verified) {
+                throw ManualActionRequired(
+                    "Нажатие выполнено, но комментарий с обязательным фото не подтверждён. Проверьте вручную перед повтором.",
+                    true,
+                )
+            }
+        } catch (error: ManualActionRequired) {
+            throw error
+        } catch (error: ChallengeRequired) {
+            throw ManualActionRequired("После нажатия TikTok показал проверку: ${error.message}", true)
+        } catch (error: Exception) {
+            throw ManualActionRequired("После нажатия не удалось проверить результат: ${error.message}", true)
         }
     }
 
@@ -271,16 +281,31 @@ class TikTokAdapter(private val runtime: WebViewRuntime, private val settings: S
         }.lastOrNull() ?: return false
         if (likeState(target.domIndex)) return true
         stopCheck()
-        val clicked = bool(
-            """(()=>{${helpers()};const item=items()[${target.domIndex}];if(!item)return false;
-            const button=all(item,likeSelectors).filter(visible)[0];if(!button)return false;button.click();return true;})()""",
-        )
+        val clicked = try {
+            bool(
+                """(()=>{${helpers()};const item=items()[${target.domIndex}];if(!item)return false;
+                const button=all(item,likeSelectors).filter(visible)[0];if(!button)return false;button.click();return true;})()""",
+            )
+        } catch (_: Exception) {
+            // The click may have reached TikTok; a second click could remove the like.
+            return false
+        }
         if (!clicked) return false
-        Thread.sleep(700)
-        if (likeState(target.domIndex)) return true
-        runtime.navigate(canonical)
-        target = getComments(canonical, 120).filter { normalizeText(it.text) == expected && it.isOwn }.lastOrNull() ?: return false
-        return likeState(target.domIndex)
+        return try {
+            Thread.sleep(700)
+            if (likeState(target.domIndex)) {
+                true
+            } else {
+                runtime.navigate(canonical)
+                target = getComments(canonical, 120).filter {
+                    normalizeText(it.text) == expected && it.isOwn
+                }.lastOrNull() ?: return false
+                likeState(target.domIndex)
+            }
+        } catch (_: Exception) {
+            // Uncertain post-click state is manual work, not a safe automatic retry.
+            false
+        }
     }
 
     private fun likeState(domIndex: Int): Boolean = bool(
