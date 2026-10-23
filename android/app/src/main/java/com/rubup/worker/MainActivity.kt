@@ -79,6 +79,7 @@ class MainActivity : Activity() {
         nativePanel = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         nativePanel.addView(button("1. Включить Accessibility для RubUP") { openAccessibilitySettings() })
         nativePanel.addView(button("2. Открыть установленный TikTok") { openInstalledTikTok() })
+        nativePanel.addView(button("3. Проверить управление (без публикации)") { testTikTokControl() })
         panel.addView(nativePanel)
         webLoginButton = button("Войти в TikTok через WebView (резерв)") {
             runtime.open("https://www.tiktok.com/login")
@@ -118,7 +119,9 @@ class MainActivity : Activity() {
 
     private fun updateDiagnostic() {
         if (::diagnostic.isInitialized) {
-            diagnostic.text = settings.telegramDiagnostic.ifBlank { "Telegram-диагностика пока не запускалась." }
+            val telegram = settings.telegramDiagnostic.ifBlank { "Telegram-диагностика пока не запускалась." }
+            diagnostic.text = listOf(telegram, settings.tiktokDiagnostic)
+                .filter(String::isNotBlank).joinToString("\n")
         }
     }
 
@@ -194,10 +197,49 @@ class MainActivity : Activity() {
     private fun openInstalledTikTok() {
         try {
             val packageName = TikTokAppLauncher.open(this)
+            settings.tiktokDiagnostic = "Найден TikTok: $packageName"
+            updateDiagnostic()
             Toast.makeText(this, "Найден TikTok: $packageName", Toast.LENGTH_LONG).show()
         } catch (error: Exception) {
             Toast.makeText(this, error.message, Toast.LENGTH_LONG).show()
         }
+    }
+
+    private fun testTikTokControl() {
+        settings.tiktokDiagnostic = "Проверяю управление TikTok: только панель комментариев, без публикации…"
+        updateDiagnostic()
+        Thread {
+            try {
+                val service = TikTokAccessibilityService.current()
+                    ?: throw SessionRequired("Accessibility не подключена. Разрешите ограниченные настройки и включите RubUP Worker")
+                val packageName = TikTokAppLauncher.open(this)
+                if (!service.waitForPackage(setOf(packageName), 20)) {
+                    throw BotFailure("TikTok открылся, но Accessibility не подтвердила его активное окно")
+                }
+                Thread.sleep(700)
+                val visible = service.snapshot().nodes.count { it.visible }
+                if (visible <= 1) {
+                    throw BotFailure("TikTok открыт, но Accessibility видит только $visible элемент(ов), а не интерфейс")
+                }
+                val clicked = service.clickFirst(::isTikTokCommentEntry)
+                if (clicked) Thread.sleep(1000)
+                val inputFound = clicked && service.snapshot().nodes.any(::isTikTokCommentInput)
+                val message = when {
+                    inputFound -> "Управление подтверждено: панель комментариев открыта, поле найдено. Публикация не выполнялась."
+                    clicked -> "Нажатие комментариев выполнено, но поле ввода не распознано. Нужны версия TikTok и язык интерфейса."
+                    else -> "Accessibility видит $visible элементов, но кнопка комментариев не распознана. Откройте видео и повторите тест; публикации не было."
+                }
+                runOnUiThread {
+                    settings.tiktokDiagnostic = message
+                    updateDiagnostic()
+                }
+            } catch (error: Exception) {
+                runOnUiThread {
+                    settings.tiktokDiagnostic = "Ошибка проверки TikTok: ${error.message ?: error.javaClass.simpleName}"
+                    updateDiagnostic()
+                }
+            }
+        }.start()
     }
 
     private fun startServiceAction(action: String) {

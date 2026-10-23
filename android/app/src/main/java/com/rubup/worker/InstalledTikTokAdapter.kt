@@ -51,6 +51,19 @@ object TikTokAppLauncher {
     }
 }
 
+fun isTikTokCommentEntry(node: UiNode): Boolean {
+    if (!node.visible || node.editable) return false
+    val label = node.textOrDescription().trim().lowercase(Locale.ROOT)
+    val id = node.resourceId.lowercase(Locale.ROOT)
+    val visual = node.className.contains("button", true) || node.className.contains("image", true) ||
+        id.contains("comment") || (node.clickable && node.text.isBlank())
+    return visual && (label.contains("comment") || label.contains("коммент") || id.contains("comment"))
+}
+
+fun isTikTokCommentInput(node: UiNode): Boolean = node.visible && node.editable &&
+    (node.label().contains("comment", true) || node.label().contains("коммент", true) ||
+        node.resourceId.contains("reply", true))
+
 private data class HttpPage(val finalUrl: String, val body: String)
 
 /**
@@ -158,11 +171,8 @@ class InstalledTikTokAdapter(
             stopCheck()
             attachPhoto(image)
         }
-        val input = service.snapshot().nodes.firstOrNull { node ->
-            node.visible && node.editable &&
-                (node.label().contains("comment", true) || node.label().contains("коммент", true) ||
-                    node.resourceId.contains("reply", true))
-        } ?: throw ManualActionRequired("Поле комментария в TikTok не найдено или не распознано")
+        val input = service.snapshot().nodes.firstOrNull(::isTikTokCommentInput)
+            ?: throw ManualActionRequired("Поле комментария в TikTok не найдено или не распознано")
         if (!service.setTextPath(input.path, action.text)) {
             throw ManualActionRequired("Android не разрешил ввести текст в поле комментария")
         }
@@ -250,16 +260,8 @@ class InstalledTikTokAdapter(
         val service = accessibility()
         checkChallenge()
         val snapshot = service.snapshot()
-        if (snapshot.nodes.any { node ->
-                node.visible && node.editable &&
-                    (node.label().contains("comment", true) || node.label().contains("коммент", true))
-            }) return
-        val clicked = service.clickFirst { node ->
-            val label = node.textOrDescription().trim().lowercase(Locale.ROOT)
-            val id = node.resourceId.lowercase(Locale.ROOT)
-            !node.editable && (label in setOf("comments", "comment", "комментарии", "комментарий") ||
-                (id.contains("comment") && node.className.contains("button", true)))
-        }
+        if (snapshot.nodes.any(::isTikTokCommentInput)) return
+        val clicked = service.clickFirst(::isTikTokCommentEntry)
         if (clicked) Thread.sleep(1000)
     }
 
@@ -399,6 +401,8 @@ class InstalledTikTokAdapter(
         val label = node.textOrDescription().trim().lowercase(Locale.ROOT)
         val id = node.resourceId.lowercase(Locale.ROOT)
         label in setOf("post", "publish", "send", "опубликовать", "отправить") ||
+            label.startsWith("post ") || label.startsWith("publish ") || label.startsWith("send ") ||
+            label.startsWith("опубликовать ") || label.startsWith("отправить ") ||
             (id.contains("comment") && (id.contains("post") || id.contains("send") || id.contains("publish")))
     }
 
@@ -477,8 +481,9 @@ class InstalledTikTokAdapter(
     private fun looksLikeUsername(text: String): Boolean = text.trim().removePrefix("@").matches(Regex("[A-Za-z0-9._-]{2,40}"))
 
     private fun isReplyNode(node: UiNode): Boolean {
-        val label = node.label().lowercase(Locale.ROOT)
-        return node.visible && (label.trim() == "reply" || label.trim() == "ответить" ||
+        val label = node.textOrDescription().trim().lowercase(Locale.ROOT)
+        return node.visible && (label == "reply" || label == "ответить" ||
+            label.startsWith("reply to ") || label.startsWith("ответить ") ||
             node.resourceId.contains("reply", true))
     }
 
